@@ -305,8 +305,7 @@ python -m unittest discover -s Code
 python -m pytest Code
 ```
 
-`Check/swaps_workbook_check.csv` holds the result of a comparison run. The script that produced
-it is not part of this repository. To check the example yourself, compare `Output/swaps_curves.csv`
+To check the example against the workbook yourself, compare `Output/swaps_curves.csv`
 with the values the workbook in `Sources/` stores for cells H13, L22, K25:K174 and L25:L174 of the
 sheet *Input Data & Extrapolation*. The workbook's inputs are the same as those in `Input/`.
 
@@ -359,7 +358,6 @@ Code/
   tests/               unit tests
 Input/                 swap_curve.csv, parameters.csv
 Output/                swaps_curves.csv, swaps_parameters.csv
-Check/                 result of a comparison with the workbook
 Sources/               EIOPA's technical documentation and demonstration workbook (example inputs)
 ```
 
