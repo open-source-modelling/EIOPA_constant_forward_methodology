@@ -33,6 +33,7 @@ that workbook exactly (see [Verification](#verification)).
 - [Scope and limitations](#scope-and-limitations)
 - [Repository structure](#repository-structure)
 - [Sources](#sources)
+- [License](#license)
 
 ---
 
@@ -304,15 +305,10 @@ python -m unittest discover -s Code
 python -m pytest Code
 ```
 
-`Archive/crossvalidation.py` repeats the comparison with the workbook. It needs `openpyxl` and the
-workbook in the repository folder, and the workbook must have been recalculated and saved by Excel.
-In PowerShell:
-
-```powershell
-$env:PYTHONPATH = "Code"; python Archive/crossvalidation.py
-```
-
-It prints the comparison and saves it to `Check/swaps_workbook_check.csv`.
+`Check/swaps_workbook_check.csv` holds the result of a comparison run. The script that produced
+it is not part of this repository. To check the example yourself, compare `Output/swaps_curves.csv`
+with the values the workbook in `Sources/` stores for cells H13, L22, K25:K174 and L25:L174 of the
+sheet *Input Data & Extrapolation*. The workbook's inputs are the same as those in `Input/`.
 
 ---
 
@@ -328,6 +324,10 @@ None of these change the results.
 | LLFR weights not summing to 1 | Python raises an error; the VBA computes `sumw` but does not use it, and the sheet shows "ERROR" | Weights sum to 100% (8.3.3) |
 | Longest maturity | `Max Maturity` input, 150 by default | The VBA writes the literal 150; EIOPA publishes 1–150 (8.1.7) |
 
+One difference from the workbook could in principle change a result: Python's `round` rounds an
+exact tie to the even digit, while Excel's `ROUND` rounds it away from zero. A rate would have to
+fall exactly halfway between two 5-decimal values, which did not happen in the cases above.
+
 ---
 
 ## Scope and limitations
@@ -337,11 +337,10 @@ Extrapolation* of EIOPA's workbook.
 
 Not covered:
 
-- **Government bonds** as input instruments. A version is in `Archive/eiopa_rfr.py` but is not
-  maintained.
+- **Government bonds** as input instruments.
 - **Currency risk adjustment** for currencies pegged to the euro (§7). Include it in the CRA if needed.
 - **Volatility adjustment**, curves with VA, credit spread sensitivity ratio and the interest rate
-  risk shocks. Earlier, unmaintained versions are in `Archive/eiopa_rfr.py`.
+  risk shocks.
 - **DLT assessment, FSP, LLFR weights and UFR**: these are inputs, taken from EIOPA's publications.
 - **Phasing-in of α**: choose the α of the relevant year yourself (see the table above).
 - Maturities below one year (EIOPA also publishes from one year onwards, §3.3.1) and
@@ -360,10 +359,8 @@ Code/
   tests/               unit tests
 Input/                 swap_curve.csv, parameters.csv
 Output/                swaps_curves.csv, swaps_parameters.csv
-Check/                 results of the cross-validation against the workbook
-Archive/               earlier versions and the cross-validation script (not maintained)
+Check/                 result of a comparison with the workbook
 Sources/               EIOPA's technical documentation and demonstration workbook (example inputs)
-*.xlsm                 working copy of the workbook, read by Archive/crossvalidation.py
 ```
 
 ---
@@ -378,3 +375,10 @@ Sources/               EIOPA's technical documentation and demonstration workboo
 
 EIOPA's documentation and workbook are © EIOPA. Check EIOPA's terms before redistributing them
 in a public repository, or link to them instead.
+
+---
+
+## License
+
+The code is released under the MIT License (see `LICENSE`). The license does not cover EIOPA's
+documentation and workbook in `Sources/`.

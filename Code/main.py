@@ -4,8 +4,7 @@ Usage (from any folder):
     python Code/main.py
 
 Reads the CSV files in "Input", validates them, calculates the curves and saves them in
-"Output". Both folders sit in the project folder, next to the Code folder. Excel is not used;
-cross-validation against the workbook is in crossvalidation.py.
+"Output". Both folders sit in the project folder, next to the Code folder. Excel is not used.
 
 Modules:
     data_io.py       reading Input, writing Output
