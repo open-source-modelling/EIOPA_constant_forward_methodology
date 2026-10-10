@@ -8,19 +8,23 @@ import csv
 import math
 from pathlib import Path
 
-from calculation import Curve, Flags, SheetResults, SwapInputs
+from calculation import INSTRUMENTS, Curve, Flags, SheetInputs, SheetResults
 
 PROJECT_DIR: Path = Path(__file__).resolve().parent.parent
 INPUT_DIR: Path = PROJECT_DIR / "Input"
 OUTPUT_DIR: Path = PROJECT_DIR / "Output"
 
-CURVE_FILE: str = "swap_curve.csv"
+CURVE_FILE: str = "curve.csv"
 PARAMETERS_FILE: str = "parameters.csv"
-CURVES_OUTPUT_FILE: str = "swaps_curves.csv"
-PARAMETERS_OUTPUT_FILE: str = "swaps_parameters.csv"
+# result files per instrument type: (curves, parameters)
+OUTPUT_FILES: dict[str, tuple[str, str]] = {
+    "SWP": ("swaps_curves.csv", "swaps_parameters.csv"),
+    "GVT": ("government_bonds_curves.csv", "government_bonds_parameters.csv"),
+}
 
 CURVE_COLUMNS: list[str] = ["Maturity", "DLT", "LLFR Weight", "Input Rate"]
-PARAMETER_NAMES: list[str] = ["Coupon Frequency", "UFR", "Convergence", "CRA", "Max Maturity"]
+# Coupon Frequency is required for swaps only
+PARAMETER_NAMES: list[str] = ["Instrument", "Coupon Frequency", "UFR", "Convergence", "CRA", "Max Maturity"]
 
 
 # --------------------------------------------------------------------------
@@ -65,7 +69,7 @@ def parse_number(text: str, where: str) -> float:
 
     Args:
         text: the cell text, e.g. "0.033" or "0,033".
-        where: location for the error message, e.g. "swap_curve.csv line 3".
+        where: location for the error message, e.g. "curve.csv line 3".
 
     Returns:
         The number.
@@ -79,10 +83,10 @@ def parse_number(text: str, where: str) -> float:
         raise ValueError(f"{where}: '{text}' is not a number") from None
 
 
-def read_inputs(folder: Path = INPUT_DIR) -> SwapInputs:
-    """Read the inputs from parameters.csv and swap_curve.csv.
+def read_inputs(folder: Path = INPUT_DIR) -> SheetInputs:
+    """Read the inputs from parameters.csv and curve.csv.
 
-    The parameters are read first, because Max Maturity limits the maturities in swap_curve.csv.
+    The parameters are read first, because Max Maturity limits the maturities in curve.csv.
     This function checks the format of the files; validation.validate_inputs checks whether the
     values make sense.
 
@@ -90,23 +94,30 @@ def read_inputs(folder: Path = INPUT_DIR) -> SwapInputs:
         folder: folder with the two files; the project's Input folder by default.
 
     Returns:
-        SwapInputs with the parameters (CouponFreq, CRA, UFR, alpha, MAX_MATURITY) and the curve
-        columns (dlt, LLFRweightsIn, SwapRatesInit). Maturities missing from swap_curve.csv are
-        missing from the curve columns too (they count as DLT 0, weight 0 and no rate); an empty
-        Input Rate is missing from SwapRatesInit.
+        SheetInputs with the parameters (Instrument, CouponFreq, CRA, UFR, alpha, MAX_MATURITY) and
+        the curve columns (dlt, LLFRweightsIn, Rate). Instrument is upper case; CouponFreq is None
+        for government bonds, which do not use it. Maturities missing from curve.csv are missing
+        from the curve columns too (they count as DLT 0, weight 0 and no rate); an empty Input Rate
+        is missing from Rate.
 
     Raises:
         FileNotFoundError: if a file is missing.
-        ValueError: if a parameter or column is missing, a value is not a number, Max Maturity is
-            not a whole number of at least 1, a maturity lies outside 1..Max Maturity, or a DLT
-            flag is not 0 or 1. The message names the file and, for the curve, the line.
+        ValueError: if a parameter or column is missing, Instrument is not SWP or GVT, a value is
+            not a number, Max Maturity is not a whole number of at least 1, a maturity lies outside
+            1..Max Maturity, or a DLT flag is not 0 or 1. The message names the file and, for the
+            curve, the line.
     """
     parameters_path: Path = folder / PARAMETERS_FILE
     values: dict[str, str] = {row.get("Parameter", "").lower(): row.get("Value", "")
                               for row in read_csv(parameters_path)}
-    missing: list[str] = [name for name in PARAMETER_NAMES if not values.get(name.lower())]
+    Instrument: str = values.get("instrument", "").upper()
+    missing: list[str] = [name for name in PARAMETER_NAMES if not values.get(name.lower())
+                          and not (name == "Coupon Frequency" and Instrument == "GVT")]
     if missing:
         raise ValueError(f"{parameters_path}: missing parameter(s) {', '.join(missing)}")
+    if Instrument not in INSTRUMENTS:
+        raise ValueError(f"{parameters_path.name} Instrument: must be SWP (swaps) or GVT (government bonds) "
+                         f"(is {values['instrument']})")
 
     def parameter(name: str) -> float:
         """Value of one parameter from parameters.csv.
@@ -138,7 +149,7 @@ def read_inputs(folder: Path = INPUT_DIR) -> SwapInputs:
 
     dlt: Flags = {}
     LLFRweightsIn: Curve = {}
-    SwapRatesInit: Curve = {}
+    Rate: Curve = {}
     for line, row in enumerate(rows, start=2):
         where: str = f"{curve_path.name} line {line}"
         t: int = int(parse_number(row["Maturity"], where))
@@ -150,16 +161,17 @@ def read_inputs(folder: Path = INPUT_DIR) -> SwapInputs:
         dlt[t] = flag
         LLFRweightsIn[t] = parse_number(row["LLFR Weight"], where) if row["LLFR Weight"] else 0.0
         if row["Input Rate"]:
-            SwapRatesInit[t] = parse_number(row["Input Rate"], where)
+            Rate[t] = parse_number(row["Input Rate"], where)
 
-    return SwapInputs(
-        CouponFreq=int(parameter("Coupon Frequency")),
+    return SheetInputs(
+        Instrument=Instrument,
+        CouponFreq=int(parameter("Coupon Frequency")) if Instrument == "SWP" else None,
         CRA=parameter("CRA"),
         UFR=parameter("UFR"),
         alpha=parameter("Convergence"),
         dlt=dlt,
         LLFRweightsIn=LLFRweightsIn,
-        SwapRatesInit=SwapRatesInit,
+        Rate=Rate,
         MAX_MATURITY=MAX_MATURITY,
     )
 
@@ -202,12 +214,15 @@ def save_table(folder: Path, file_name: str, header: list[str], rows: list[list[
     return path
 
 
-def save_results(inputs: SwapInputs, res: SheetResults, folder: Path = OUTPUT_DIR) -> list[Path]:
-    """Write the results of a calculation to swaps_curves.csv and swaps_parameters.csv.
+def save_results(inputs: SheetInputs, res: SheetResults, folder: Path = OUTPUT_DIR) -> list[Path]:
+    """Write the results of a calculation to the result files of its instrument type.
 
-    swaps_curves.csv has one row per maturity 1..Max Maturity with the inputs (DLT, LLFR Weight,
-    Input Rate) and the results (Bootstrapped Zero Rate CC, Basic RFR). swaps_parameters.csv lists
-    the parameters, the FSP and the LLFR (CC).
+    The files are swaps_curves.csv and swaps_parameters.csv for swaps, and
+    government_bonds_curves.csv and government_bonds_parameters.csv for government bonds
+    (OUTPUT_FILES), so the results of both can sit side by side. The curves file has one row per
+    maturity 1..Max Maturity with the inputs (DLT, LLFR Weight, Input Rate) and the results
+    (Bootstrapped Zero Rate CC, Basic RFR). The parameters file lists the parameters (Coupon
+    Frequency for swaps only), the FSP and the LLFR (CC).
 
     Args:
         inputs: the inputs of the calculation.
@@ -215,16 +230,19 @@ def save_results(inputs: SwapInputs, res: SheetResults, folder: Path = OUTPUT_DI
         folder: target folder; the project's Output folder by default.
 
     Returns:
-        The paths of the written files: [swaps_curves.csv, swaps_parameters.csv].
+        The paths of the written files: [curves file, parameters file].
     """
+    curves_file, parameters_file = OUTPUT_FILES[inputs["Instrument"]]
     curves_path: Path = save_table(
-        folder, CURVES_OUTPUT_FILE,
+        folder, curves_file,
         ["Maturity", "DLT", "LLFR Weight", "Input Rate", "Bootstrapped Zero Rate CC", "Basic RFR"],
-        [[t, inputs["dlt"].get(t, 0), inputs["LLFRweightsIn"].get(t, 0.0), inputs["SwapRatesInit"].get(t, math.nan),
+        [[t, inputs["dlt"].get(t, 0), inputs["LLFRweightsIn"].get(t, 0.0), inputs["Rate"].get(t, math.nan),
           res["BOOTSTRAPPED_CURVE"][t], res["BASIC_RFR"][t]] for t in range(1, inputs["MAX_MATURITY"] + 1)])
-    parameters_path: Path = save_table(folder, PARAMETERS_OUTPUT_FILE, ["Parameter", "Value"], [
-        ["Instrument", "SWP"],
-        ["Coupon Frequency", inputs["CouponFreq"]],
+    coupon_frequency: list[list[str | int | float]] = (
+        [["Coupon Frequency", inputs["CouponFreq"]]] if inputs["CouponFreq"] is not None else [])
+    parameters_path: Path = save_table(folder, parameters_file, ["Parameter", "Value"], [
+        ["Instrument", inputs["Instrument"]],
+        *coupon_frequency,
         ["UFR", inputs["UFR"]],
         ["Convergence", inputs["alpha"]],
         ["CRA", inputs["CRA"]],

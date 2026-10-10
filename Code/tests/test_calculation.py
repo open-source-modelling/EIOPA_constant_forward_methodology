@@ -8,10 +8,12 @@ Run from the project folder with either
 import math
 import unittest
 
-from calculation import (DEFAULT_MAX_MATURITY, Curve, Flags, SwapInputs, bootstrap_swaps, calculate_sheet, excel_round,
-                         extrapolation, get_llfr, newton_raphson_forward_swap)
+from calculation import (DEFAULT_MAX_MATURITY, Curve, Flags, SheetInputs, bootstrap_curve, bootstrap_swaps,
+                         bootstrap_zeros, calculate_sheet, excel_round, extrapolation, get_llfr,
+                         newton_raphson_forward_swap)
 
-# Workbook example ('Input Data & Extrapolation', 19 May 2026): market par swap rates at the DLT maturities
+# Workbook example ('Input Data & Extrapolation', 19 May 2026): market rates at the DLT maturities, read as
+# par swap rates (instrument SWP) or as annually compounded government bond zero rates (instrument GVT)
 EXAMPLE_RATES: Curve = {1: 0.02176, 2: 0.022621, 3: 0.023795, 4: 0.0248, 5: 0.02569, 6: 0.02651,
                         7: 0.02732, 8: 0.028, 9: 0.028631, 10: 0.02927, 11: 0.02979, 12: 0.03027,
                         13: 0.030779, 15: 0.03143, 20: 0.03233, 25: 0.0325, 30: 0.032431,
@@ -19,16 +21,17 @@ EXAMPLE_RATES: Curve = {1: 0.02176, 2: 0.022621, 3: 0.023795, 4: 0.0248, 5: 0.02
 EXAMPLE_WEIGHTS: Curve = {20: 0.33, 25: 0.12, 30: 0.48, 40: 0.04, 50: 0.03}
 
 
-def example_inputs() -> SwapInputs:
-    """A fresh copy of the workbook example (safe to modify in a test)."""
-    return SwapInputs(
-        CouponFreq=1,
+def example_inputs(Instrument: str = "SWP") -> SheetInputs:
+    """A fresh copy of the workbook example for swaps or government bonds (safe to modify in a test)."""
+    return SheetInputs(
+        Instrument=Instrument,
+        CouponFreq=1 if Instrument == "SWP" else None,
         CRA=10,
         UFR=0.033,
         alpha=0.11,
         dlt={t: 1 if t in EXAMPLE_RATES else 0 for t in range(1, DEFAULT_MAX_MATURITY + 1)},
         LLFRweightsIn=dict(EXAMPLE_WEIGHTS),
-        SwapRatesInit=dict(EXAMPLE_RATES),
+        Rate=dict(EXAMPLE_RATES),
         MAX_MATURITY=DEFAULT_MAX_MATURITY,
     )
 
@@ -154,6 +157,117 @@ class TestBootstrapSwaps(unittest.TestCase):
         for t in range(51, 61):
             self.assertAlmostEqual(one_year_forward(zero_cc, t), last_forward, places=12)
         self.assertTrue(math.isnan(zero_cc[61]))
+
+
+class TestBootstrapZeros(unittest.TestCase):
+
+    def test_flat_zero_curve_stays_flat(self) -> None:
+        s = 0.03
+        rates: Curve = {t: s for t in range(1, 31)}
+        zero_cc = bootstrap_zeros(rates, flags(list(rates)), "A", 0, 30, "C", "Z")
+        zero_ac = bootstrap_zeros(rates, flags(list(rates)), "A", 0, 30, "A", "Z")
+        for t in range(1, 31):
+            self.assertAlmostEqual(zero_cc[t], math.log(1 + s), places=15)
+            self.assertAlmostEqual(zero_ac[t], s, places=15)
+
+    def test_reproduces_the_input_rates_at_dlt_maturities(self) -> None:
+        # z_t = ln(1 + r_t - CRA) at every DLT maturity
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z")
+        for t, r in EXAMPLE_RATES.items():
+            self.assertAlmostEqual(zero_cc[t], math.log(1 + r - 0.001), places=15, msg=f"maturity {t}")
+
+    def test_cra_is_deducted_in_basis_points(self) -> None:
+        lowered: Curve = {t: r - 0.001 for t, r in EXAMPLE_RATES.items()}
+        self.assertEqual(bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z"),
+                         bootstrap_zeros(lowered, flags(list(EXAMPLE_RATES)), "A", 0, 50, "C", "Z"))
+
+    def test_continuously_compounded_input_is_used_as_given(self) -> None:
+        rates: Curve = {1: 0.02, 5: 0.025, 10: 0.03}
+        zero_cc = bootstrap_zeros(rates, flags(list(rates)), "C", 0, 10, "C", "Z")
+        for t, r in rates.items():
+            self.assertAlmostEqual(zero_cc[t], r, places=15)
+
+    def test_first_rate_is_held_flat_before_the_first_dlt_maturity(self) -> None:
+        rates: Curve = {3: 0.025, 5: 0.028, 10: 0.03}
+        zero_cc = bootstrap_zeros(rates, flags(list(rates)), "A", 0, 10, "C", "Z")
+        for t in (1, 2, 3):
+            self.assertEqual(zero_cc[t], math.log(1.025))
+
+    def test_forward_is_constant_between_dlt_points(self) -> None:
+        # f = (b * z_b - a * z_a) / (b - a) for every year between DLT maturities a and b
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z")
+        for a, b in ((13, 15), (15, 20), (20, 25), (30, 40), (40, 50)):
+            expected = (b * zero_cc[b] - a * zero_cc[a]) / (b - a)
+            for t in range(a + 1, b + 1):
+                self.assertAlmostEqual(one_year_forward(zero_cc, t), expected, places=12, msg=f"interval {a}-{b}")
+
+    def test_rates_at_non_dlt_maturities_are_ignored(self) -> None:
+        dlt = flags(list(EXAMPLE_RATES))
+        with_extra: Curve = dict(EXAMPLE_RATES)
+        with_extra.update({14: 0.5, 16: 0.5, 35: 0.5})
+        self.assertEqual(bootstrap_zeros(with_extra, dlt, "A", 10, 50, "C", "Z"),
+                         bootstrap_zeros(EXAMPLE_RATES, dlt, "A", 10, 50, "C", "Z"))
+
+    def test_dlt_maturity_without_rate_is_skipped(self) -> None:
+        without_15: Curve = {t: r for t, r in EXAMPLE_RATES.items() if t != 15}
+        self.assertEqual(bootstrap_zeros(without_15, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z"),
+                         bootstrap_zeros(EXAMPLE_RATES, flags(list(without_15)), "A", 10, 50, "C", "Z"))
+
+    def test_beyond_max_tenor_is_nan(self) -> None:
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z")
+        self.assertEqual(sorted(zero_cc), list(range(1, DEFAULT_MAX_MATURITY + 1)))
+        self.assertFalse(any(math.isnan(zero_cc[t]) for t in range(1, 51)))
+        self.assertTrue(all(math.isnan(zero_cc[t]) for t in range(51, DEFAULT_MAX_MATURITY + 1)))
+
+    def test_no_nan_when_last_dlt_maturity_is_max_maturity(self) -> None:
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z", MAX_MATURITY=50)
+        self.assertEqual(sorted(zero_cc), list(range(1, 51)))
+        self.assertFalse(any(math.isnan(z) for z in zero_cc.values()))
+
+    def test_result_length_follows_max_maturity(self) -> None:
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z", MAX_MATURITY=70)
+        self.assertEqual(sorted(zero_cc), list(range(1, 71)))
+        self.assertTrue(all(math.isnan(zero_cc[t]) for t in range(51, 71)))
+
+    def test_flat_forward_extension_up_to_max_tenor(self) -> None:
+        # MaxTenor beyond the last DLT maturity: the last forward is carried forward flat
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 60, "C", "Z")
+        last_forward = one_year_forward(zero_cc, 50)
+        for t in range(51, 61):
+            self.assertAlmostEqual(one_year_forward(zero_cc, t), last_forward, places=12)
+        self.assertTrue(math.isnan(zero_cc[61]))
+
+    def test_annual_output_is_the_continuous_output_converted(self) -> None:
+        zero_cc = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z")
+        zero_ac = bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "A", "Z")
+        for t in range(1, 51):
+            self.assertAlmostEqual(zero_ac[t], math.exp(zero_cc[t]) - 1, places=15)
+        self.assertTrue(math.isnan(zero_ac[51]))
+
+
+class TestBootstrapCurve(unittest.TestCase):
+
+    def test_swaps_use_bootstrap_swaps(self) -> None:
+        self.assertEqual(bootstrap_curve("SWP", EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 1, 50, "C", "Z"),
+                         bootstrap_swaps(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), 1, 10, 50, "C", "Z"))
+
+    def test_government_bonds_use_bootstrap_zeros(self) -> None:
+        self.assertEqual(bootstrap_curve("GVT", EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, None, 50, "C", "Z"),
+                         bootstrap_zeros(EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 50, "C", "Z"))
+
+    def test_coupon_frequency_is_not_used_for_government_bonds(self) -> None:
+        self.assertEqual(bootstrap_curve("GVT", EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, 4, 50, "C", "Z"),
+                         bootstrap_curve("GVT", EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, None, 50, "C", "Z"))
+
+    def test_swaps_without_coupon_frequency_raise(self) -> None:
+        with self.assertRaisesRegex(ValueError, "swaps need a coupon frequency"):
+            bootstrap_curve("SWP", EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, None, 50, "C", "Z")
+
+    def test_max_maturity_is_passed_on(self) -> None:
+        for Instrument, CouponFreq in (("SWP", 1), ("GVT", None)):
+            zero_cc = bootstrap_curve(Instrument, EXAMPLE_RATES, flags(list(EXAMPLE_RATES)), "A", 10, CouponFreq, 50,
+                                      "C", "Z", MAX_MATURITY=60)
+            self.assertEqual(sorted(zero_cc), list(range(1, 61)), msg=Instrument)
 
 
 class TestGetLLFR(unittest.TestCase):
@@ -311,8 +425,68 @@ class TestCalculateSheet(unittest.TestCase):
 
     def test_rates_at_non_dlt_maturities_do_not_change_the_result(self) -> None:
         inputs = example_inputs()
-        inputs["SwapRatesInit"].update({14: 0.031124, 16: 0.031742, 35: 0.0325})
+        inputs["Rate"].update({14: 0.031124, 16: 0.031742, 35: 0.0325})
         self.assertEqual(calculate_sheet(**inputs)["BASIC_RFR"], self.res["BASIC_RFR"])
+
+
+class TestCalculateSheetGovernmentBonds(unittest.TestCase):
+    """The workbook example with instrument type GVT (values as calculated by Excel/VBA)."""
+
+    def setUp(self) -> None:
+        self.res = calculate_sheet(**example_inputs("GVT"))
+
+    def test_fsp_and_llfr(self) -> None:
+        self.assertEqual(self.res["FSP"], 20)
+        self.assertEqual(self.res["LLFR"], 0.03188302797422029)
+
+    def test_bootstrapped_curve(self) -> None:
+        expected: Curve = {1: 0.02054744788766011, 2: 0.021390581515523904, 13: 0.02934421611279172,
+                           14: 0.02968277400823564, 15: 0.029976190850953703, 20: 0.03084923141548605,
+                           30: 0.030947158417286666, 31: 0.030900737881867854, 50: 0.029859727832683033}
+        for t, rate in expected.items():
+            self.assertAlmostEqual(self.res["BOOTSTRAPPED_CURVE"][t], rate, places=15, msg=f"maturity {t}")
+        self.assertTrue(math.isnan(self.res["BOOTSTRAPPED_CURVE"][51]))
+
+    def test_basic_rfr(self) -> None:
+        expected: Curve = {1: 0.02076, 2: 0.02162, 10: 0.02827, 14: 0.03013, 20: 0.03133, 21: 0.03138,
+                           25: 0.03157, 30: 0.03176, 40: 0.03204, 50: 0.03223, 60: 0.03235, 100: 0.03261,
+                           150: 0.03274}
+        for t, rate in expected.items():
+            self.assertEqual(self.res["BASIC_RFR"][t], rate, msg=f"maturity {t}")
+        self.assertEqual(len(self.res["BASIC_RFR"]), DEFAULT_MAX_MATURITY)
+
+    def test_basic_rfr_up_to_fsp_is_the_input_rate_minus_cra(self) -> None:
+        # before rounding: equal up to the conversion annual -> continuous -> annual
+        zero = extrapolation(self.res["BOOTSTRAPPED_CURVE"], "Z", self.res["FSP"], 0.033, self.res["LLFR"], 0.11, "A")
+        for t, rate in EXAMPLE_RATES.items():
+            if t <= self.res["FSP"]:
+                self.assertAlmostEqual(zero[t], rate - 0.001, places=15, msg=f"maturity {t}")
+
+    def test_rounding_after_the_compounding_conversion(self) -> None:
+        # 3y: 0.023795 - 0.001 = 0.022795 comes back from ln/exp as 0.0227949999...,
+        # so ROUND gives 0.02279 (as in Excel, L27), not 0.0228
+        self.assertEqual(self.res["BASIC_RFR"][3], 0.02279)
+
+    def test_llfr_is_calculated_from_the_market_rates(self) -> None:
+        # a higher 30y rate raises the LLFR and the extrapolated rates, but not the rates up to the FSP
+        inputs = example_inputs("GVT")
+        inputs["Rate"][30] += 0.001
+        res = calculate_sheet(**inputs)
+        self.assertGreater(res["LLFR"], self.res["LLFR"])
+        for t in range(1, DEFAULT_MAX_MATURITY + 1):
+            if t <= 20:
+                self.assertEqual(res["BASIC_RFR"][t], self.res["BASIC_RFR"][t], msg=f"maturity {t}")
+            else:
+                self.assertGreater(res["BASIC_RFR"][t], self.res["BASIC_RFR"][t], msg=f"maturity {t}")
+
+    def test_coupon_frequency_does_not_change_the_result(self) -> None:
+        inputs = example_inputs("GVT")
+        inputs["CouponFreq"] = 2
+        self.assertEqual(calculate_sheet(**inputs)["BASIC_RFR"], self.res["BASIC_RFR"])
+
+    def test_differs_from_swaps(self) -> None:
+        # the same rates read as par swap rates give a different curve
+        self.assertNotEqual(calculate_sheet(**example_inputs("SWP"))["LLFR"], self.res["LLFR"])
 
 
 if __name__ == "__main__":

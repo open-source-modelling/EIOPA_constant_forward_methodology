@@ -20,19 +20,20 @@ import unittest
 from pathlib import Path
 
 import main
-from calculation import SheetResults, SwapInputs, calculate_sheet
-from data_io import CURVE_COLUMNS, CURVE_FILE, CURVES_OUTPUT_FILE, PARAMETERS_FILE, PARAMETERS_OUTPUT_FILE, save_table
+from calculation import SheetInputs, SheetResults, calculate_sheet
+from data_io import CURVE_COLUMNS, CURVE_FILE, OUTPUT_FILES, PARAMETERS_FILE, save_table
 from main import print_summary, run
 from tests.test_calculation import example_inputs
 
 
-def write_inputs(folder: Path, inputs: SwapInputs) -> None:
-    """Write ``inputs`` as swap_curve.csv and parameters.csv to ``folder``."""
+def write_inputs(folder: Path, inputs: SheetInputs) -> None:
+    """Write ``inputs`` as curve.csv and parameters.csv to ``folder`` (Coupon Frequency only if it is set)."""
     save_table(folder, CURVE_FILE, CURVE_COLUMNS, [
-        [t, inputs["dlt"].get(t, 0), inputs["LLFRweightsIn"].get(t, 0.0), inputs["SwapRatesInit"].get(t, math.nan)]
+        [t, inputs["dlt"].get(t, 0), inputs["LLFRweightsIn"].get(t, 0.0), inputs["Rate"].get(t, math.nan)]
         for t in range(1, inputs["MAX_MATURITY"] + 1)])
     save_table(folder, PARAMETERS_FILE, ["Parameter", "Value"], [
-        ["Coupon Frequency", inputs["CouponFreq"]],
+        ["Instrument", inputs["Instrument"]],
+        *([["Coupon Frequency", inputs["CouponFreq"]]] if inputs["CouponFreq"] is not None else []),
         ["UFR", inputs["UFR"]],
         ["Convergence", inputs["alpha"]],
         ["CRA", inputs["CRA"]],
@@ -129,14 +130,24 @@ class TestRun(unittest.TestCase):
 
     def test_saves_the_results(self) -> None:
         printed(run, self.input_dir, self.output_dir)
-        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()),
-                         sorted([CURVES_OUTPUT_FILE, PARAMETERS_OUTPUT_FILE]))
+        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()), sorted(OUTPUT_FILES["SWP"]))
 
     def test_prints_the_summary_and_the_saved_files(self) -> None:
         _, output = printed(run, self.input_dir, self.output_dir)
-        self.assertTrue(output.startswith("FSP  : 20 years\n"))
-        self.assertIn(f"Saved {self.output_dir / CURVES_OUTPUT_FILE}\n", output)
-        self.assertIn(f"Saved {self.output_dir / PARAMETERS_OUTPUT_FILE}\n", output)
+        self.assertTrue(output.startswith("Instrument: SWP (swaps)\nFSP  : 20 years\n"))
+        for name in OUTPUT_FILES["SWP"]:
+            self.assertIn(f"Saved {self.output_dir / name}\n", output)
+
+    def test_government_bonds(self) -> None:
+        write_inputs(self.input_dir, example_inputs("GVT"))
+        self.assertFalse("Coupon Frequency" in (self.input_dir / PARAMETERS_FILE).read_text(encoding="utf-8"))
+        res, output = printed(run, self.input_dir, self.output_dir)
+        expected: SheetResults = calculate_sheet(**example_inputs("GVT"))
+        assert isinstance(res, dict)
+        self.assertEqual((res["FSP"], res["LLFR"], res["BASIC_RFR"]),
+                         (expected["FSP"], expected["LLFR"], expected["BASIC_RFR"]))
+        self.assertTrue(output.startswith("Instrument: GVT (government bonds)\nFSP  : 20 years\n"))
+        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()), sorted(OUTPUT_FILES["GVT"]))
 
     def test_invalid_inputs_stop_before_anything_is_printed_or_saved(self) -> None:
         inputs = example_inputs()
@@ -188,8 +199,17 @@ class TestCommandLine(unittest.TestCase):
         process = self.run_main()
         self.assertEqual(process.returncode, 0, process.stderr)
         self.assertIn("FSP  : 20 years", process.stdout)
-        self.assertTrue((self.project / "Output" / CURVES_OUTPUT_FILE).exists())
-        self.assertTrue((self.project / "Output" / PARAMETERS_OUTPUT_FILE).exists())
+        for name in OUTPUT_FILES["SWP"]:
+            self.assertTrue((self.project / "Output" / name).exists())
+
+    def test_success_government_bonds(self) -> None:
+        write_inputs(self.project / "Input", example_inputs("GVT"))
+        process = self.run_main()
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("Instrument: GVT (government bonds)", process.stdout)
+        self.assertIn("LLFR : 3.18830280% (continuously compounded)", process.stdout)
+        for name in OUTPUT_FILES["GVT"]:
+            self.assertTrue((self.project / "Output" / name).exists())
 
     def test_invalid_inputs_give_an_input_error(self) -> None:
         inputs = example_inputs()

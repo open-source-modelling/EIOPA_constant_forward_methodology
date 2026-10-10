@@ -13,12 +13,14 @@ import unittest
 from pathlib import Path
 
 import data_io
-from calculation import SheetResults, SwapInputs, calculate_sheet
-from data_io import (CURVE_FILE, CURVES_OUTPUT_FILE, PARAMETERS_FILE, PARAMETERS_OUTPUT_FILE, csv_value,
-                     parse_number, read_csv, read_inputs, save_results, save_table)
+from calculation import SheetInputs, SheetResults, calculate_sheet
+from data_io import (CURVE_FILE, OUTPUT_FILES, PARAMETERS_FILE, csv_value, parse_number, read_csv, read_inputs,
+                     save_results, save_table)
 from tests.test_calculation import example_inputs
 
-PARAMETERS_TEXT: str = "Parameter,Value\nCoupon Frequency,1\nUFR,0.033\nConvergence,0.11\nCRA,10\nMax Maturity,150\n"
+PARAMETERS_TEXT: str = ("Parameter,Value\nInstrument,SWP\nCoupon Frequency,1\nUFR,0.033\nConvergence,0.11\nCRA,10\n"
+                        "Max Maturity,150\n")
+GVT_PARAMETERS_TEXT: str = "Parameter,Value\nInstrument,GVT\nUFR,0.033\nConvergence,0.11\nCRA,10\nMax Maturity,150\n"
 CURVE_TEXT: str = ("Maturity,DLT,LLFR Weight,Input Rate\n"
                    "1,1,0,0.02176\n"
                    "2,1,0,0.022621\n"
@@ -115,6 +117,7 @@ class TestReadInputs(TempFolderTestCase):
     def test_reads_parameters(self) -> None:
         self.write_inputs()
         inputs = read_inputs(self.folder)
+        self.assertEqual(inputs["Instrument"], "SWP")
         self.assertEqual((inputs["CouponFreq"], inputs["UFR"], inputs["alpha"], inputs["CRA"]), (1, 0.033, 0.11, 10.0))
         self.assertIsInstance(inputs["CouponFreq"], int)
         self.assertEqual(inputs["MAX_MATURITY"], 150)
@@ -126,12 +129,12 @@ class TestReadInputs(TempFolderTestCase):
         self.assertEqual(inputs["dlt"], {1: 1, 2: 1, 3: 0, 4: 0, 5: 1})
         self.assertEqual(inputs["LLFRweightsIn"], {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 1.0})
         # an empty Input Rate is left out; a rate at a non-DLT maturity is kept (the calculation ignores it)
-        self.assertEqual(inputs["SwapRatesInit"], {1: 0.02176, 2: 0.022621, 3: 0.0235, 5: 0.02569})
+        self.assertEqual(inputs["Rate"], {1: 0.02176, 2: 0.022621, 3: 0.0235, 5: 0.02569})
 
     def test_empty_dlt_and_weight_count_as_zero(self) -> None:
         self.write_inputs(curve="Maturity,DLT,LLFR Weight,Input Rate\n7,,,0.03\n")
         inputs = read_inputs(self.folder)
-        self.assertEqual((inputs["dlt"], inputs["LLFRweightsIn"], inputs["SwapRatesInit"]), ({7: 0}, {7: 0.0}, {7: 0.03}))
+        self.assertEqual((inputs["dlt"], inputs["LLFRweightsIn"], inputs["Rate"]), ({7: 0}, {7: 0.0}, {7: 0.03}))
 
     def test_excel_style_files(self) -> None:
         # semicolons, decimal commas and a byte order mark, as saved by Excel with a European locale
@@ -142,11 +145,33 @@ class TestReadInputs(TempFolderTestCase):
         self.assertEqual(excel_style, read_inputs(self.folder))
 
     def test_parameter_names_ignore_case_and_extra_rows(self) -> None:
-        self.write_inputs(parameters="Parameter,Value\ncoupon frequency,2\nufr,0.035\nCONVERGENCE,0.4\n"
+        self.write_inputs(parameters="Parameter,Value\ninstrument,swp\ncoupon frequency,2\nufr,0.035\nCONVERGENCE,0.4\n"
                                      "Cra,5\nmax maturity,100\nComment,ignored\n")
         inputs = read_inputs(self.folder)
-        self.assertEqual((inputs["CouponFreq"], inputs["UFR"], inputs["alpha"], inputs["CRA"], inputs["MAX_MATURITY"]),
-                         (2, 0.035, 0.4, 5.0, 100))
+        self.assertEqual((inputs["Instrument"], inputs["CouponFreq"], inputs["UFR"], inputs["alpha"], inputs["CRA"],
+                          inputs["MAX_MATURITY"]), ("SWP", 2, 0.035, 0.4, 5.0, 100))
+
+    def test_government_bonds_need_no_coupon_frequency(self) -> None:
+        self.write_inputs(parameters=GVT_PARAMETERS_TEXT)
+        inputs = read_inputs(self.folder)
+        self.assertEqual((inputs["Instrument"], inputs["CouponFreq"]), ("GVT", None))
+        self.assertEqual((inputs["UFR"], inputs["alpha"], inputs["CRA"], inputs["MAX_MATURITY"]), (0.033, 0.11, 10.0, 150))
+
+    def test_coupon_frequency_is_ignored_for_government_bonds(self) -> None:
+        self.write_inputs(parameters=PARAMETERS_TEXT.replace("Instrument,SWP", "Instrument,gvt"))
+        inputs = read_inputs(self.folder)
+        self.assertEqual((inputs["Instrument"], inputs["CouponFreq"]), ("GVT", None))
+
+    def test_swaps_need_a_coupon_frequency(self) -> None:
+        self.write_inputs(parameters=GVT_PARAMETERS_TEXT.replace("Instrument,GVT", "Instrument,SWP"))
+        with self.assertRaisesRegex(ValueError, "missing parameter\\(s\\) Coupon Frequency$"):
+            read_inputs(self.folder)
+
+    def test_unknown_instrument(self) -> None:
+        self.write_inputs(parameters=PARAMETERS_TEXT.replace("Instrument,SWP", "Instrument,Bonds"))
+        with self.assertRaisesRegex(ValueError, "parameters.csv Instrument: must be SWP \\(swaps\\) or GVT "
+                                                "\\(government bonds\\) \\(is Bonds\\)"):
+            read_inputs(self.folder)
 
     def test_missing_curve_file(self) -> None:
         self.write(PARAMETERS_FILE, PARAMETERS_TEXT)
@@ -200,12 +225,12 @@ class TestReadInputs(TempFolderTestCase):
 
     def test_text_in_a_number_column(self) -> None:
         self.write_inputs(curve="Maturity,DLT,LLFR Weight,Input Rate\n1,1,0,2%\n")
-        with self.assertRaisesRegex(ValueError, "swap_curve.csv line 2: '2%' is not a number"):
+        with self.assertRaisesRegex(ValueError, "curve.csv line 2: '2%' is not a number"):
             read_inputs(self.folder)
 
     def test_missing_and_empty_parameters_are_listed(self) -> None:
         self.write_inputs(parameters="Parameter,Value\nCoupon Frequency,1\nUFR,\n")
-        with self.assertRaisesRegex(ValueError, "missing parameter\\(s\\) UFR, Convergence, CRA, Max Maturity"):
+        with self.assertRaisesRegex(ValueError, "missing parameter\\(s\\) Instrument, UFR, Convergence, CRA, Max Maturity"):
             read_inputs(self.folder)
 
     def test_bad_parameter_value(self) -> None:
@@ -215,7 +240,7 @@ class TestReadInputs(TempFolderTestCase):
 
     def test_decimal_comma_in_a_comma_separated_file(self) -> None:
         self.write_inputs(parameters=PARAMETERS_TEXT.replace("0.033", "0,033"))
-        with self.assertRaisesRegex(ValueError, "parameters.csv line 3: more values than column names"):
+        with self.assertRaisesRegex(ValueError, "parameters.csv line 4: more values than column names"):
             read_inputs(self.folder)
 
 
@@ -259,12 +284,12 @@ class TestSaveResults(TempFolderTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.inputs: SwapInputs = example_inputs()
+        self.inputs: SheetInputs = example_inputs()
         self.res: SheetResults = calculate_sheet(**self.inputs)
         self.paths: list[Path] = save_results(self.inputs, self.res, self.folder)
 
     def test_writes_both_files(self) -> None:
-        self.assertEqual(self.paths, [self.folder / CURVES_OUTPUT_FILE, self.folder / PARAMETERS_OUTPUT_FILE])
+        self.assertEqual(self.paths, [self.folder / "swaps_curves.csv", self.folder / "swaps_parameters.csv"])
 
     def test_curves_file_has_one_row_per_maturity(self) -> None:
         rows = read_csv(self.paths[0])
@@ -291,10 +316,39 @@ class TestSaveResults(TempFolderTestCase):
                           values["Max Maturity"]), ("1", "0.033", "0.11", "10", "150"))
 
     def test_rows_follow_max_maturity(self) -> None:
-        inputs: SwapInputs = example_inputs()
+        inputs: SheetInputs = example_inputs()
         inputs["MAX_MATURITY"] = 60
         paths = save_results(inputs, calculate_sheet(**inputs), self.folder)
         self.assertEqual([int(row["Maturity"]) for row in read_csv(paths[0])], list(range(1, 61)))
+
+
+class TestSaveResultsGovernmentBonds(TempFolderTestCase):
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.inputs: SheetInputs = example_inputs("GVT")
+        self.res: SheetResults = calculate_sheet(**self.inputs)
+        self.paths: list[Path] = save_results(self.inputs, self.res, self.folder)
+
+    def test_files_are_named_after_the_instrument(self) -> None:
+        self.assertEqual(OUTPUT_FILES["GVT"], ("government_bonds_curves.csv", "government_bonds_parameters.csv"))
+        self.assertEqual(self.paths, [self.folder / name for name in OUTPUT_FILES["GVT"]])
+
+    def test_parameters_file_has_no_coupon_frequency(self) -> None:
+        values = {row["Parameter"]: row["Value"] for row in read_csv(self.paths[1])}
+        self.assertEqual(list(values), ["Instrument", "UFR", "Convergence", "CRA", "Max Maturity", "FSP", "LLFR (CC)"])
+        self.assertEqual(values["Instrument"], "GVT")
+        self.assertEqual(float(values["LLFR (CC)"]), self.res["LLFR"])
+
+    def test_curves_file_values(self) -> None:
+        rows = {int(row["Maturity"]): row for row in read_csv(self.paths[0])}
+        for t in range(1, self.inputs["MAX_MATURITY"] + 1):
+            self.assertEqual(float(rows[t]["Basic RFR"]), self.res["BASIC_RFR"][t])
+
+    def test_swap_and_government_bond_results_sit_side_by_side(self) -> None:
+        save_results(example_inputs("SWP"), calculate_sheet(**example_inputs("SWP")), self.folder)
+        self.assertEqual(sorted(p.name for p in self.folder.iterdir()),
+                         sorted([*OUTPUT_FILES["SWP"], *OUTPUT_FILES["GVT"]]))
 
 
 if __name__ == "__main__":

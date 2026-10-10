@@ -7,14 +7,14 @@ Run from the project folder with either
 
 import unittest
 
-from calculation import SwapInputs
+from calculation import SheetInputs
 from tests.test_calculation import example_inputs
 from validation import validate_inputs
 
 
 class TestValidateInputs(unittest.TestCase):
 
-    def assertInvalid(self, inputs: SwapInputs, *messages: str) -> None:
+    def assertInvalid(self, inputs: SheetInputs, *messages: str) -> None:
         """validate_inputs raises ValueError and the message contains every given text."""
         with self.assertRaises(ValueError) as context:
             validate_inputs(inputs)
@@ -33,7 +33,7 @@ class TestValidateInputs(unittest.TestCase):
     def test_dlt_maturity_without_rate_is_allowed(self) -> None:
         # the VBA skips DLT points with an empty rate, so this is not an error
         inputs = example_inputs()
-        del inputs["SwapRatesInit"][12]
+        del inputs["Rate"][12]
         validate_inputs(inputs)
 
     def test_max_maturity_below_one(self) -> None:
@@ -59,13 +59,33 @@ class TestValidateInputs(unittest.TestCase):
         # a rate at a maturity with DLT = 0 and no weight still lies outside the curve
         inputs = example_inputs()
         inputs["MAX_MATURITY"] = 60
-        inputs["SwapRatesInit"][70] = 0.03
+        inputs["Rate"][70] = 0.03
         self.assertInvalid(inputs, "maturities [70] lie beyond Max Maturity (60)")
 
     def test_coupon_frequency_below_one(self) -> None:
         inputs = example_inputs()
         inputs["CouponFreq"] = 0
-        self.assertInvalid(inputs, "Coupon Frequency must be at least 1")
+        self.assertInvalid(inputs, "Coupon Frequency must be at least 1 for swaps (is 0)")
+
+    def test_swaps_without_coupon_frequency(self) -> None:
+        inputs = example_inputs()
+        inputs["CouponFreq"] = None
+        self.assertInvalid(inputs, "Coupon Frequency must be at least 1 for swaps (is None)")
+
+    def test_government_bond_example_is_valid(self) -> None:
+        validate_inputs(example_inputs("GVT"))
+
+    def test_government_bonds_do_not_need_a_coupon_frequency(self) -> None:
+        # not used for government bonds, so neither a missing nor an unusual value is a problem
+        for CouponFreq in (None, 0):
+            inputs = example_inputs("GVT")
+            inputs["CouponFreq"] = CouponFreq
+            validate_inputs(inputs)
+
+    def test_unknown_instrument(self) -> None:
+        inputs = example_inputs()
+        inputs["Instrument"] = "BND"
+        self.assertInvalid(inputs, "Instrument must be SWP (swaps) or GVT (government bonds) (is BND)")
 
     def test_convergence_not_positive(self) -> None:
         inputs = example_inputs()
@@ -79,7 +99,7 @@ class TestValidateInputs(unittest.TestCase):
 
     def test_input_rate_in_percent(self) -> None:
         inputs = example_inputs()
-        inputs["SwapRatesInit"][10] = 2.927
+        inputs["Rate"][10] = 2.927
         self.assertInvalid(inputs, "Input Rate must be a decimal", "[10]")
 
     def test_no_dlt_maturity_with_a_rate(self) -> None:
@@ -109,7 +129,7 @@ class TestValidateInputs(unittest.TestCase):
 
     def test_weight_on_dlt_maturity_without_rate(self) -> None:
         inputs = example_inputs()
-        del inputs["SwapRatesInit"][25]
+        del inputs["Rate"][25]
         self.assertInvalid(inputs, "LLFR weights are only allowed on maturities with DLT = 1", "[25]")
 
     def test_no_dlt_point_before_fsp(self) -> None:

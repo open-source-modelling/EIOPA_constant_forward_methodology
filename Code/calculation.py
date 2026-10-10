@@ -1,16 +1,14 @@
-"""Calculation of the EIOPA basic risk-free interest rate term structure from swaps.
+"""Calculation of the EIOPA basic risk-free interest rate term structure from swaps or government bonds.
 
-Python port of the swap part of the VBA module ``mExtrapolation`` and of the formulas on sheet
+Python port of the VBA module ``mExtrapolation`` and of the formulas on sheet
 "Input Data & Extrapolation" of "RFR extrapolation and VA calculation (19 May 2026).xlsm":
 
+    H11      Instrument Type                       "SWP" (swaps) or "GVT" (government bonds)
     H13      FSP                                   first maturity with a positive LLFR weight
-    K25:K174 Bootstrapped Zero Rate CC             VBA BootstrapSwaps (via BootstrapCurve)
+    K25:K174 Bootstrapped Zero Rate CC             VBA BootstrapCurve: BootstrapSwaps for swaps,
+                                                   BootstrapZeros for government bonds
     L22      LLFR                                  VBA GetLLFR
     L25:L174 Extrapolated Zero Rate AC / Basic RFR VBA Extrapolation, rounded to 5 decimals
-
-The Extrapolation? = FALSE case of the sheet (the input curve is passed through unchanged)
-is not covered. Methodology: EIOPA-BoS-26/198 "RFR Technical Documentation", sections 8.5
-and Annex D.1-D.6.
 
 Naming follows the VBA module mExtrapolation (same parameter and local variable names);
 VBA arrays (Option Base 1) and Excel ranges are dicts keyed 1, 2, ... (for ranges the key
@@ -24,26 +22,32 @@ import math
 from typing import TypedDict
 
 # Longest maturity of the curve when none is given; the VBA writes the literal 150 instead.
-# The value used in a calculation comes from parameters.csv ("Max Maturity", SwapInputs MAX_MATURITY).
+# The value used in a calculation comes from parameters.csv ("Max Maturity", SheetInputs MAX_MATURITY).
 DEFAULT_MAX_MATURITY: int = 150
+
+# Instrument types of cell H11 (list Parameters!G9:G10) and what they stand for
+INSTRUMENTS: dict[str, str] = {"SWP": "swaps", "GVT": "government bonds"}
 
 Curve = dict[int, float]   # {maturity or array index: rate / value}
 Flags = dict[int, int]     # {maturity: 1 or 0}, e.g. the DLT column
 
 
-class SwapInputs(TypedDict):
-    """Inputs on sheet 'Input Data & Extrapolation' (instrument fixed to SWP).
+class SheetInputs(TypedDict):
+    """Inputs on sheet 'Input Data & Extrapolation'.
 
     Field names are the names of the VBA parameters that receive them.
     """
-    CouponFreq: int         # H12 Coupon Frequency          (BootstrapSwaps CouponFreq)
-    CRA: float              # H16 CRA, basis points         (BootstrapSwaps CRA)
+    Instrument: str         # H11 Instrument Type, "SWP" or "GVT"  (BootstrapCurve Instrument)
+    CouponFreq: int | None  # H12 Coupon Frequency; swaps only, None for government bonds
+                            #                               (BootstrapCurve CouponFreq)
+    CRA: float              # H16 CRA, basis points         (BootstrapCurve CRA)
     UFR: float              # H14 UFR                       (Extrapolation UFR)
     alpha: float            # H15 Convergence               (Extrapolation alpha)
-    dlt: Flags              # H25:H174 DLT                  (BootstrapSwaps dlt)
+    dlt: Flags              # H25:H174 DLT                  (BootstrapCurve dlt)
     LLFRweightsIn: Curve    # I25:I174 LLFR Weight          (GetLLFR LLFRweightsIn)
-    SwapRatesInit: Curve    # J25:J174 Input Rate; maturities without a rate are missing
-                            #                               (BootstrapSwaps SwapRatesInit)
+    Rate: Curve             # J25:J174 Input Rate: par swap rates (SWP) or zero rates, annually
+                            # compounded (GVT); maturities without a rate are missing
+                            #                               (BootstrapCurve Rate)
     MAX_MATURITY: int       # longest maturity of the curve (the VBA's literal 150; 150 rows on the sheet)
 
 
@@ -60,7 +64,7 @@ class SheetResults(TypedDict):
 
 
 # --------------------------------------------------------------------------
-# VBA module mExtrapolation (swap part)
+# VBA module mExtrapolation
 # --------------------------------------------------------------------------
 
 def newton_raphson_forward_swap(fwguess: float, swapt1: float, m: float, c: float,
@@ -192,6 +196,120 @@ def bootstrap_swaps(SwapRatesInit: Curve, dlt: Flags, CouponFreq: int, CRA: floa
     return zero
 
 
+def bootstrap_zeros(ZeroRatesInit: Curve, dlt: Flags, CompoundingIn: str, CRA: float, MaxTenor: int,
+                    CompoundingOut: str, RateType: str, MAX_MATURITY: int = DEFAULT_MAX_MATURITY) -> Curve:
+    """Bootstrap zero rates from zero rates under the constant forward assumption (VBA BootstrapZeros).
+
+    Uses the rates at maturities with DLT = 1 and a rate, after deducting the CRA; with
+    CompoundingIn "A" they are converted to continuous compounding. Before the first of these
+    maturities its rate is held flat; between two of them the continuously compounded forward is
+    constant, f = (b * z_b - a * z_a) / (b - a), so the DLT rates are reproduced exactly. If
+    MaxTenor lies beyond the last DLT maturity, the last forward is carried forward flat.
+    Maturities after MaxTenor are nan (#N/A).
+
+    Args:
+        ZeroRatesInit: {maturity: market zero rate}; an empty cell is a missing key.
+        dlt: {maturity: 1 or 0}, DLT flags.
+        CompoundingIn: "A" for annually compounded input rates, anything else for continuously
+            compounded ones.
+        CRA: credit risk adjustment in basis points, deducted from every rate before the
+            conversion to continuous compounding.
+        MaxTenor: last maturity to calculate.
+        CompoundingOut: "A" for annually compounded zero rates, anything else for continuously
+            compounded ones.
+        RateType: ignored, exactly as in the VBA (zero rates are always returned).
+        MAX_MATURITY: not a VBA parameter; replaces the VBA's literal 150 (length of the input
+            range and of the result).
+
+    Returns:
+        {maturity: zero rate} for maturities 1..MAX_MATURITY; nan after MaxTenor.
+
+    Raises:
+        KeyError: if no maturity has DLT = 1 and a rate (prevented by validation.validate_inputs).
+    """
+    ZeroRates: Curve = {}
+    ZeroTenors: dict[int, int] = {}
+    forward: Curve = {}
+    discount: Curve = {}
+    zero: Curve = {}
+
+    m: int = 0
+    for k in range(1, MAX_MATURITY + 1):                # For k = 1 To ZeroRatesInit.Rows.Count
+        if ZeroRatesInit.get(k) is not None and dlt.get(k) == 1:
+            m = m + 1
+            ZeroTenors[m] = k
+            ZeroRates[m] = ZeroRatesInit[k] - CRA / 10000
+            if CompoundingIn == "A":
+                ZeroRates[m] = math.log(1 + ZeroRates[m])
+
+    # eventual extrapolation to the left
+    for k in range(1, ZeroTenors[1] + 1):
+        forward[k] = ZeroRates[1]
+        zero[k] = forward[k]
+        discount[k] = math.exp(-k * zero[k])
+
+    # constant forward interpolation if applicable
+    for t in range(2, len(ZeroTenors) + 1):            # For t = 2 To UBound(ZeroTenors)
+        m = ZeroTenors[t] - ZeroTenors[t - 1]
+        fwtemp: float = (ZeroTenors[t] * ZeroRates[t] - ZeroTenors[t - 1] * ZeroRates[t - 1]) / m
+        for k in range(1, m + 1):
+            forward[ZeroTenors[t - 1] + k] = fwtemp
+            discount[ZeroTenors[t - 1] + k] = discount[ZeroTenors[t - 1] + k - 1] * math.exp(-fwtemp)
+            zero[ZeroTenors[t - 1] + k] = -math.log(discount[ZeroTenors[t - 1] + k]) / (ZeroTenors[t - 1] + k)
+    t: int = len(ZeroTenors) + 1                        # value of t after the VBA For loop
+
+    if ZeroTenors[t - 1] < MaxTenor:  # eventual extrapolation to the right
+        for k in range(1, MaxTenor - ZeroTenors[t - 1] + 1):
+            forward[ZeroTenors[t - 1] + k] = forward[ZeroTenors[t - 1] + k - 1]
+            discount[ZeroTenors[t - 1] + k] = discount[ZeroTenors[t - 1] + k - 1] * math.exp(-forward[ZeroTenors[t - 1] + k])
+            zero[ZeroTenors[t - 1] + k] = -math.log(discount[ZeroTenors[t - 1] + k]) / (ZeroTenors[t - 1] + k)
+
+    if MaxTenor < MAX_MATURITY:                         # If MaxTenor < 150 Then
+        for k in range(MaxTenor + 1, MAX_MATURITY + 1):
+            forward[k] = math.nan
+            zero[k] = math.nan
+
+    if CompoundingOut == "A":
+        for k in range(1, MaxTenor + 1):
+            forward[k] = math.exp(forward[k]) - 1
+            zero[k] = math.exp(zero[k]) - 1
+
+    return zero
+
+
+def bootstrap_curve(Instrument: str, Rate: Curve, dlt: Flags, CompoundingIn: str, CRA: float, CouponFreq: int | None,
+                    MaxTenor: int, CompoundingOut: str, RateType: str, MAX_MATURITY: int = DEFAULT_MAX_MATURITY) -> Curve:
+    """Bootstrap with the method of the instrument type (VBA BootstrapCurve).
+
+    "SWP" calls bootstrap_swaps; any other instrument type, i.e. "GVT", calls bootstrap_zeros.
+
+    Args:
+        Instrument: "SWP" for swaps, "GVT" for government bonds.
+        Rate: {maturity: market rate}: par swap rates or zero rates; an empty cell is a missing key.
+        dlt: {maturity: 1 or 0}, DLT flags.
+        CompoundingIn: compounding of zero rates, see bootstrap_zeros; not used for swaps.
+        CRA: credit risk adjustment in basis points.
+        CouponFreq: coupon payments per year; used only for swaps, may be None otherwise.
+        MaxTenor: last maturity to calculate.
+        CompoundingOut: "C" for continuously compounded zero rates, "A" for annually compounded
+            ones (see bootstrap_swaps and bootstrap_zeros for other values).
+        RateType: ignored, as in the VBA.
+        MAX_MATURITY: length of the input range and of the result.
+
+    Returns:
+        {maturity: zero rate} for maturities 1..MAX_MATURITY; nan after MaxTenor.
+
+    Raises:
+        ValueError: for swaps without a coupon frequency (prevented by validation.validate_inputs).
+    """
+    if Instrument == "SWP":
+        if CouponFreq is None:
+            raise ValueError("swaps need a coupon frequency")
+        return bootstrap_swaps(Rate, dlt, CouponFreq, CRA, MaxTenor, CompoundingOut, RateType, MAX_MATURITY)
+    else:
+        return bootstrap_zeros(Rate, dlt, CompoundingIn, CRA, MaxTenor, CompoundingOut, RateType, MAX_MATURITY)
+
+
 def get_llfr(InputRates: Curve, DLTin: Flags, LLFRweightsIn: Curve) -> float:
     """Calculate the last liquid forward rate (VBA GetLLFR; PDF 8.3 and 8.5.6).
 
@@ -202,7 +320,7 @@ def get_llfr(InputRates: Curve, DLTin: Flags, LLFRweightsIn: Curve) -> float:
         with f(a, b) = (b * z_b - a * z_a) / (b - a).
 
     Args:
-        InputRates: {maturity: continuously compounded zero rate}, e.g. the result of bootstrap_swaps.
+        InputRates: {maturity: continuously compounded zero rate}, e.g. the result of bootstrap_curve.
         DLTin: {maturity: 1 or 0}, DLT flags.
         LLFRweightsIn: {maturity: LLFR weight}.
 
@@ -312,24 +430,28 @@ def excel_round(curve: Curve, digits: int = 5) -> Curve:
     return {t: round(z, digits) for t, z in curve.items()}
 
 
-def calculate_sheet(CouponFreq: int, CRA: float, UFR: float, alpha: float, dlt: Flags, LLFRweightsIn: Curve,
-                    SwapRatesInit: Curve, MAX_MATURITY: int) -> SheetResults:
-    """Calculate the sheet 'Input Data & Extrapolation' for swaps: bootstrapped curve, FSP, LLFR and basic RFR.
+def calculate_sheet(Instrument: str, CouponFreq: int | None, CRA: float, UFR: float, alpha: float, dlt: Flags,
+                    LLFRweightsIn: Curve, Rate: Curve, MAX_MATURITY: int) -> SheetResults:
+    """Calculate the sheet 'Input Data & Extrapolation': bootstrapped curve, FSP, LLFR and basic RFR.
 
     The steps follow the worksheet formulas:
-        K25:K174  BootstrapCurve  -> bootstrap_swaps up to the last DLT maturity, continuously compounded
+        K25:K174  BootstrapCurve  -> bootstrap_curve up to the last DLT maturity, continuously
+                                     compounded: bootstrap_swaps for swaps, bootstrap_zeros for
+                                     government bonds (input rates annually compounded)
         H13       XMATCH          -> FSP = first maturity with a positive LLFR weight
         L22       GetLLFR         -> get_llfr on the bootstrapped curve
         L25:L174  ROUND(Extrapolation(..., "A"), 5) -> extrapolation and excel_round
 
     Args:
-        CouponFreq: coupon payments per year of the swaps.
+        Instrument: "SWP" for swaps, "GVT" for government bonds.
+        CouponFreq: coupon payments per year of the swaps; not used for government bonds (None).
         CRA: credit risk adjustment in basis points.
         UFR: ultimate forward rate, annually compounded.
         alpha: convergence parameter.
         dlt: {maturity: 1 or 0}, DLT flags.
         LLFRweightsIn: {maturity: LLFR weight}.
-        SwapRatesInit: {maturity: market par swap rate}; only maturities with DLT = 1 are used.
+        Rate: {maturity: market rate}: par swap rates, or annually compounded zero rates for
+            government bonds; only maturities with DLT = 1 are used.
         MAX_MATURITY: Length of the extrapolated curve in years.
 
     Returns:
@@ -338,19 +460,20 @@ def calculate_sheet(CouponFreq: int, CRA: float, UFR: float, alpha: float, dlt: 
         to 5 decimals); both curves for maturities 1..MAX_MATURITY.
 
     Raises:
-        ValueError: if the LLFR weights do not sum to 1, or if there is no DLT maturity or no
-            positive weight.
+        ValueError: if the LLFR weights do not sum to 1, if there is no DLT maturity or no
+            positive weight, or for swaps without a coupon frequency.
         KeyError: for other inputs that validation.validate_inputs rejects, e.g. no DLT maturity
             before the FSP. Validate the inputs first.
     """
-    BASECURVE: Curve = SwapRatesInit
+    BASECURVE: Curve = Rate
     DLT: Flags = {t: dlt.get(t, 0) for t in range(1, MAX_MATURITY + 1)}
     LLFR_WEIGHTS: Curve = {t: LLFRweightsIn.get(t, 0.0) for t in range(1, MAX_MATURITY + 1)}
 
     # K25: BootstrapCurve(V.INSTRUMENT, R.BASECURVE, R.DLT, "A", V.CRA, V.COUPON_FREQ, LLP, "C", "Z"),
-    # which calls BootstrapSwaps for instrument "SWP"
+    # which calls BootstrapSwaps for instrument "SWP" and BootstrapZeros otherwise
     LLP: int = max(t for t in DLT if DLT[t] == 1)                     # MAX(FILTER(R.MATURITY, R.DLT=1))
-    BOOTSTRAPPED_CURVE: Curve = bootstrap_swaps(BASECURVE, DLT, CouponFreq, CRA, LLP, "C", "Z", MAX_MATURITY)
+    BOOTSTRAPPED_CURVE: Curve = bootstrap_curve(Instrument, BASECURVE, DLT, "A", CRA, CouponFreq, LLP, "C", "Z",
+                                                 MAX_MATURITY)
     # H13: XMATCH(TRUE, R.LLFR_WEIGHTS > 0, 0)
     FSP: int = min(t for t in LLFR_WEIGHTS if LLFR_WEIGHTS[t] > 0)
     # L22: GetLLFR(R.BOOTSTRAPPED_CURVE, R.DLT, R.LLFR_WEIGHTS)

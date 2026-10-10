@@ -1,0 +1,7 @@
+Parameter,Value
+Instrument,SWP
+Coupon Frequency,1
+UFR,0.033
+Convergence,0.11
+CRA,10
+Max Maturity,150

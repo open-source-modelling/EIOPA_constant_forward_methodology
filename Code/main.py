@@ -1,4 +1,4 @@
-"""EIOPA basic risk-free interest rate term structure from swaps: main script.
+"""EIOPA basic risk-free interest rate term structure from swaps or government bonds: main script.
 
 Usage (from any folder):
     python Code/main.py
@@ -14,20 +14,24 @@ Modules:
     tests/           unit tests (python -m unittest discover -s Code, or python -m pytest Code)
 
 Inputs, in the folder "Input":
-    swap_curve.csv    columns Maturity, DLT, LLFR Weight, Input Rate (sheet columns G:J).
+    curve.csv         columns Maturity, DLT, LLFR Weight, Input Rate (sheet columns G:J).
+                      Input Rate is the par swap rate (swaps) or the annually compounded zero
+                      rate (government bonds), before the CRA.
                       One row per maturity 1..Max Maturity; missing maturities count as DLT 0,
                       weight 0 and no rate. Input Rate may be empty; only rates with DLT = 1
                       are used.
     parameters.csv    columns Parameter, Value with the rows
-                      Coupon Frequency, UFR, Convergence, CRA (sheet cells H12, H14:H16;
-                      CRA in basis points, UFR and Convergence as decimals) and
+                      Instrument (SWP for swaps or GVT for government bonds; sheet cell H11),
+                      Coupon Frequency (swaps only), UFR, Convergence, CRA (sheet cells H12,
+                      H14:H16; CRA in basis points, UFR and Convergence as decimals) and
                       Max Maturity (longest maturity of the curves in years; 150 on the sheet).
 Both files may use ',' or ';' as separator and '.' or ',' as decimal mark.
 
-Results, in the folder "Output" (created if missing, files overwritten on each run):
-    swaps_curves.csv            maturity 1..Max Maturity, DLT, LLFR weight, input rate,
+Results, in the folder "Output" (created if missing, files overwritten on each run), named after
+the instrument: swaps_*.csv for swaps, government_bonds_*.csv for government bonds:
+    *_curves.csv                maturity 1..Max Maturity, DLT, LLFR weight, input rate,
                                 bootstrapped zero rate CC, basic RFR
-    swaps_parameters.csv        parameters used, FSP and LLFR
+    *_parameters.csv            parameters used, FSP and LLFR
 Rates are decimals with full precision; nan (#N/A) is written as an empty cell.
 """
 
@@ -35,7 +39,7 @@ import math
 import sys
 from pathlib import Path
 
-from calculation import SheetResults, SwapInputs, calculate_sheet
+from calculation import INSTRUMENTS, SheetInputs, SheetResults, calculate_sheet
 from data_io import INPUT_DIR, OUTPUT_DIR, read_inputs, save_results
 from validation import validate_inputs
 
@@ -64,12 +68,12 @@ def print_summary(res: SheetResults) -> None:
 
 
 def run(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> SheetResults:
-    """Read and validate the inputs, calculate the curves, print a summary and save the results.
+    """Read and validate the inputs, calculate the curves, print the instrument and a summary, and save the results.
 
     Nothing is printed or saved if the inputs cannot be read or are invalid.
 
     Args:
-        input_dir: folder with swap_curve.csv and parameters.csv; the project's Input folder by default.
+        input_dir: folder with curve.csv and parameters.csv; the project's Input folder by default.
         output_dir: folder for the results; the project's Output folder by default.
 
     Returns:
@@ -79,9 +83,10 @@ def run(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> SheetResu
         FileNotFoundError: if an input file is missing.
         ValueError: if the inputs cannot be read or are invalid; the message describes the problems.
     """
-    inputs: SwapInputs = read_inputs(input_dir)
+    inputs: SheetInputs = read_inputs(input_dir)
     validate_inputs(inputs)
     res: SheetResults = calculate_sheet(**inputs)
+    print(f"Instrument: {inputs['Instrument']} ({INSTRUMENTS[inputs['Instrument']]})")
     print_summary(res)
     print()
     for saved in save_results(inputs, res, output_dir):
