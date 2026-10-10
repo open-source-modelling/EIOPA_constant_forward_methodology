@@ -391,39 +391,6 @@ curve = extrapolation(zero_cc, "Z", 20, 0.033, llfr, 0.11, "A", MAX_MATURITY=150
 print(round(curve[150], 5))                                             # annually compounded
 ```
 
-### Function reference
-
-Inputs and outputs of every function you might call. A curve is a dict `{maturity: rate}`; the
-docstrings give the details and the errors raised.
-
-| Function | Module | Workbook | Inputs | Returns |
-|---|---|---|---|---|
-| `calculate_sheet` | `calculation` | Sheet *Input Data & Extrapolation* | The `SheetInputs` above | `SheetResults` (above) |
-| `bootstrap_curve` | `calculation` | VBA `BootstrapCurve` | `Instrument`, `Rate`, `dlt`, `CompoundingIn`, `CRA`, `CouponFreq`, `MaxTenor`, `CompoundingOut`, `RateType`, `MAX_MATURITY` | Zero curve for 1 to `MAX_MATURITY`, `nan` after `MaxTenor`; from `bootstrap_swaps` for `"SWP"`, otherwise from `bootstrap_zeros` |
-| `bootstrap_swaps` | `calculation` | VBA `BootstrapSwaps` | `SwapRatesInit` (par swap rates), `dlt`, `CouponFreq`, `CRA`, `MaxTenor`, `CompoundingOut`, `RateType`, `MAX_MATURITY` | Zero curve, as above |
-| `bootstrap_zeros` | `calculation` | VBA `BootstrapZeros` | `ZeroRatesInit` (zero rates), `dlt`, `CompoundingIn`, `CRA`, `MaxTenor`, `CompoundingOut`, `RateType`, `MAX_MATURITY` | Zero curve, as above |
-| `newton_raphson_forward_swap` | `calculation` | VBA `NewtonRaphsonForwardSwap` | `fwguess`, `swapt1` (periodic coupon), `m` (periods), `c` (target), `tol` = 1e-15, `max_iter` = 500 | Constant periodic forward rate of one swap interval |
-| `get_llfr` | `calculation` | VBA `GetLLFR` | `InputRates` (continuously compounded zero curve), `DLTin`, `LLFRweightsIn` | LLFR, continuously compounded |
-| `extrapolation` | `calculation` | VBA `Extrapolation` | `InputRatesCC`, `RateType`, `FSP`, `UFR`, `LLFR`, `alpha`, `Compounding`, `MAX_MATURITY` | Zero curve for 1 to `MAX_MATURITY`: the input up to the FSP, extrapolated after it |
-| `excel_round` | `calculation` | Worksheet `ROUND(…, 5)` | `curve`, `digits` = 5 | The curve with every rate rounded by `excel_round_value` |
-| `excel_round_value` | `calculation` | Worksheet `ROUND` | `value`, `digits` = 5 | One number rounded as Excel does: at 15 significant digits, halves away from zero |
-| `validate_inputs` | `validation` | | `SheetInputs` | Nothing; raises `ValueError` listing every problem |
-| `read_inputs` | `data_io` | | `folder` (default `Input/`) | `SheetInputs` read from `parameters.csv` and `curve.csv` |
-| `save_results` | `data_io` | | `SheetInputs`, `SheetResults`, `folder` (default `Output/`) | Paths of the two result files written |
-| `run` | `main` | | `input_dir`, `output_dir` (default `Input/`, `Output/`) | `SheetResults`; also prints a summary and saves the results |
-
-The text options take these values, as in the VBA:
-
-| Option | Value | Meaning |
-|---|---|---|
-| `CompoundingIn` | `"A"` / `"C"` | Input zero rates are annually / continuously compounded (`bootstrap_zeros` only) |
-| `CompoundingOut`, `Compounding` | `"A"` / `"C"` | Return annually / continuously compounded rates |
-| `RateType` | `"Z"` / `"F"` | `extrapolation`: the input are zero rates / one-year forward rates. The bootstrap functions ignore it and always return zero rates. |
-
-`calculate_sheet` calls the bootstrap with `CompoundingIn = "A"`, `CompoundingOut = "C"` and
-`MaxTenor` = the last DLT maturity, and the extrapolation with `RateType = "Z"` and
-`Compounding = "A"`, exactly like the formulas on the sheet.
-
 ### Conventions
 
 - Maturities are whole years. Curves, flags and weights are dicts keyed by maturity, e.g.
