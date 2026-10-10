@@ -485,16 +485,6 @@ None of these change the results.
 | LLFR weights not summing to 1 | Python raises an error; the VBA computes `sumw` but does not use it, and the sheet shows "ERROR" | Weights sum to 100% (8.3.3) |
 | Longest maturity | `Max Maturity` input, 150 by default | The VBA writes the literal 150; EIOPA publishes 1–150 (8.1.7) |
 
-**Rounding.** The workbook rounds the basic risk-free rates with Excel's `ROUND`, which works on the
-number with 15 significant digits and rounds a half away from zero. `excel_round_value` does the
-same; Python's built-in `round` would not, because it uses the exact binary value. The two differ
-for numbers within floating-point noise of a tie, which is common for government bond rates
-quoted with six decimals: up to the FSP the basic rate is the input rate minus the CRA. For
-example, an input of 0.021775 with a CRA of 10 bp comes back from the conversion to continuous
-compounding and back as 0.020774999999999988. Excel's `ROUND` gives 0.02078, Python's `round`
-0.02077. `excel_round_value` was checked against Excel's `ROUND` on 1,916 numbers, most of them
-near such ties, and agreed on all of them; Python's `round` disagreed on 352.
-
 ---
 
 ## Scope and limitations
