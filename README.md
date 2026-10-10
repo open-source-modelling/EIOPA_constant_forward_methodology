@@ -28,7 +28,7 @@ that workbook exactly (see [Verification](#verification)).
 - [Quick start](#quick-start)
 - [Inputs and outputs](#inputs-and-outputs): files, columns and [example results](#example-results)
 - [Using the algorithm in your own code](#using-the-algorithm-in-your-own-code): inputs and outputs of
-  [`calculate_sheet`](#inputs-of-calculate_sheet) and a [function reference](#function-reference)
+  [`calculate_sheet`](#inputs-of-calculate_sheet)
 - [Verification](#verification)
 - [Differences from the EIOPA workbook and documentation](#differences-from-the-eiopa-workbook-and-documentation)
 - [Scope and limitations](#scope-and-limitations)
@@ -415,7 +415,7 @@ print(round(curve[150], 5))                                             # annual
   - a variant with quarterly coupons, CRA 30 bp, UFR 4.3%, α 40% and a 1-year swap rate of 2.5%;
   - the workbook's example with instrument type `GVT` (government bonds);
   - government bond rates with six decimals ending in 5, where the rounding to 5 decimals decides
-    the last digit (see [rounding](#differences-from-the-eiopa-workbook-and-documentation)).
+    the last digit.
 - **Unit tests** cover the calculation, the validation, reading and writing, and the main script,
   with full line and branch coverage of the calculation, validation and input/output modules.
   Several tests check mathematical properties rather than stored numbers: every DLT swap reprices
