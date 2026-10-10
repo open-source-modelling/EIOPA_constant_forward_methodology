@@ -90,7 +90,7 @@ the first maturity with a positive LLFR weight as the FSP.
 
 **Swaps.** Each swap is valued at par, with its rate reduced by the CRA:
 
-$$\frac{s_{t_k} - \text{CRA}}{m}\sum_{j=1}^{m\,t_k} d_{j/m} + d_{t_k} = 1 .$$
+$$\frac{s_{t_k} - \text{CRA}}{m}\sum_{j=1}^{m \cdot t_k} d_{j/m} + d_{t_k} = 1 .$$
 
 Between consecutive DLT maturities the periodic forward rate is constant. For the first DLT
 maturity it equals the periodic coupon. For each later one it is the single unknown of the par
@@ -101,7 +101,7 @@ the last DLT maturity.
 converted to continuous compounding, $z^c_{t_k} = \ln(1 + r_{t_k} - \text{CRA})$, and the forward
 rate is constant between consecutive DLT maturities:
 
-$$f^c(t_{k-1}, t_k) = \frac{t_k\, z^c_{t_k} - t_{k-1}\, z^c_{t_{k-1}}}{t_k - t_{k-1}} .$$
+$$f^c(t_{k-1}, t_k) = \frac{t_k \cdot z^c_{t_k} - t_{k-1} \cdot z^c_{t_{k-1}}}{t_k - t_{k-1}} .$$
 
 No solver is needed and the DLT rates are reproduced exactly. Before the first DLT maturity its
 rate is held flat. The workbook does this in the VBA function `BootstrapZeros`; `BootstrapCurve`
@@ -109,9 +109,9 @@ chooses between it and `BootstrapSwaps` from the instrument type (cell H11).
 
 ### 3. Last liquid forward rate (§8.3, §8.5.6)
 
-With $f^c(a,b) = \dfrac{b\,z^c_b - a\,z^c_a}{b-a}$ the forward rate from $a$ to $b$:
+With $f^c(a,b) = \dfrac{b \cdot z^c_b - a \cdot z^c_a}{b-a}$ the forward rate from $a$ to $b$:
 
-$$\text{LLFR}^c = w_{t_F}\, f^c(t_F - 1, t_F) + \sum_{k=F+1}^{L} w_{t_k}\, f^c(t_F, t_k).$$
+$$\text{LLFR}^c = w_{t_F} \cdot f^c(t_F - 1, t_F) + \sum_{k=F+1}^{L} w_{t_k} \cdot f^c(t_F, t_k).$$
 
 The first term is the one-year forward rate into the FSP (§8.5.6, §10.2.1). Because the forward
 rate is constant between DLT maturities, it equals the forward rate from the last DLT maturity
@@ -123,9 +123,9 @@ the FSP is the last DLT maturity, its weight is 100% (§8.3.4).
 
 For $h = 1, 2, \dots$ years after the FSP:
 
-$$f^c(t_F, t_F+h) = \ln(1+\text{UFR}) + \big(\text{LLFR}^c - \ln(1+\text{UFR})\big)\,\frac{1-e^{-\alpha h}}{\alpha h}$$
+$$f^c(t_F, t_F+h) = \ln(1+\text{UFR}) + \big(\text{LLFR}^c - \ln(1+\text{UFR})\big) \cdot \frac{1-e^{-\alpha h}}{\alpha h}$$
 
-$$z^c_{t_F+h} = \frac{t_F\, z^c_{t_F} + h\, f^c(t_F, t_F+h)}{t_F+h}, \qquad z_t = e^{z^c_t} - 1 .$$
+$$z^c_{t_F+h} = \frac{t_F \cdot z^c_{t_F} + h \cdot f^c(t_F, t_F+h)}{t_F+h}, \qquad z_t = e^{z^c_t} - 1 .$$
 
 The forward rate starts at the LLFR at the FSP and converges to the UFR; a larger α means faster
 convergence. Up to the FSP the curve is the bootstrapped curve. Rates beyond the FSP are only
