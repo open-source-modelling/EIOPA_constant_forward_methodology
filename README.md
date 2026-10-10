@@ -295,8 +295,8 @@ results, once with the rates read as par swap rates and once as government bond 
 
 ## Using the algorithm in your own code
 
-`Code/calculation.py` contains the whole calculation and imports only `math` and `typing`. Copy
-it into your project, or add the `Code` folder to the import path.
+`Code/calculation.py` contains the whole calculation and imports only `math`, `decimal` and
+`typing`. Copy it into your project, or add the `Code` folder to the import path.
 
 ### The complete calculation
 
@@ -405,7 +405,8 @@ docstrings give the details and the errors raised.
 | `newton_raphson_forward_swap` | `calculation` | VBA `NewtonRaphsonForwardSwap` | `fwguess`, `swapt1` (periodic coupon), `m` (periods), `c` (target), `tol` = 1e-15, `max_iter` = 500 | Constant periodic forward rate of one swap interval |
 | `get_llfr` | `calculation` | VBA `GetLLFR` | `InputRates` (continuously compounded zero curve), `DLTin`, `LLFRweightsIn` | LLFR, continuously compounded |
 | `extrapolation` | `calculation` | VBA `Extrapolation` | `InputRatesCC`, `RateType`, `FSP`, `UFR`, `LLFR`, `alpha`, `Compounding`, `MAX_MATURITY` | Zero curve for 1 to `MAX_MATURITY`: the input up to the FSP, extrapolated after it |
-| `excel_round` | `calculation` | Worksheet `ROUND(…, 5)` | `curve`, `digits` = 5 | The curve with every rate rounded |
+| `excel_round` | `calculation` | Worksheet `ROUND(…, 5)` | `curve`, `digits` = 5 | The curve with every rate rounded by `excel_round_value` |
+| `excel_round_value` | `calculation` | Worksheet `ROUND` | `value`, `digits` = 5 | One number rounded as Excel does: at 15 significant digits, halves away from zero |
 | `validate_inputs` | `validation` | | `SheetInputs` | Nothing; raises `ValueError` listing every problem |
 | `read_inputs` | `data_io` | | `folder` (default `Input/`) | `SheetInputs` read from `parameters.csv` and `curve.csv` |
 | `save_results` | `data_io` | | `SheetInputs`, `SheetResults`, `folder` (default `Output/`) | Paths of the two result files written |
@@ -442,10 +443,12 @@ The text options take these values, as in the VBA:
 - **Against EIOPA's workbook.** The results were compared with *RFR extrapolation and VA
   calculation (19 May 2026).xlsm*, recalculated by Excel and its VBA. The FSP, the LLFR, the
   bootstrapped curve and the basic risk-free rate match exactly, with a largest difference of 0,
-  in three cases:
+  in four cases:
   - the workbook's example: annual coupons, CRA 10 bp, UFR 3.3%, α 11%;
   - a variant with quarterly coupons, CRA 30 bp, UFR 4.3%, α 40% and a 1-year swap rate of 2.5%;
-  - the workbook's example with instrument type `GVT` (government bonds).
+  - the workbook's example with instrument type `GVT` (government bonds);
+  - government bond rates with six decimals ending in 5, where the rounding to 5 decimals decides
+    the last digit (see [rounding](#differences-from-the-eiopa-workbook-and-documentation)).
 - **Unit tests** cover the calculation, the validation, reading and writing, and the main script,
   with full line and branch coverage of the calculation, validation and input/output modules.
   Several tests check mathematical properties rather than stored numbers: every DLT swap reprices
@@ -482,13 +485,15 @@ None of these change the results.
 | LLFR weights not summing to 1 | Python raises an error; the VBA computes `sumw` but does not use it, and the sheet shows "ERROR" | Weights sum to 100% (8.3.3) |
 | Longest maturity | `Max Maturity` input, 150 by default | The VBA writes the literal 150; EIOPA publishes 1–150 (8.1.7) |
 
-One difference from the workbook could in principle change a result: Python's `round` rounds an
-exact tie to the even digit, while Excel's `ROUND` rounds it away from zero. A rate would have to
-fall exactly halfway between two 5-decimal values, which did not happen in the cases above. For
-government bonds it comes close: up to the FSP the basic rate is the input rate minus the CRA, so
-an input with six decimals ending in 5 lands on a tie in theory. In the example the 3-year rate
-(0.023795 − 0.001 = 0.022795) comes back from the conversion to continuous compounding and back
-as 0.0227949999…, just below the tie, and both Python and Excel give 0.02279.
+**Rounding.** The workbook rounds the basic risk-free rates with Excel's `ROUND`, which works on the
+number with 15 significant digits and rounds a half away from zero. `excel_round_value` does the
+same; Python's built-in `round` would not, because it uses the exact binary value. The two differ
+for numbers within floating-point noise of a tie, which is common for government bond rates
+quoted with six decimals: up to the FSP the basic rate is the input rate minus the CRA. For
+example, an input of 0.021775 with a CRA of 10 bp comes back from the conversion to continuous
+compounding and back as 0.020774999999999988. Excel's `ROUND` gives 0.02078, Python's `round`
+0.02077. `excel_round_value` was checked against Excel's `ROUND` on 1,916 numbers, most of them
+near such ties, and agreed on all of them; Python's `round` disagreed on 352.
 
 ---
 

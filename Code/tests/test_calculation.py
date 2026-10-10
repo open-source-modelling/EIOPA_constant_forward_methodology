@@ -9,7 +9,7 @@ import math
 import unittest
 
 from calculation import (DEFAULT_MAX_MATURITY, Curve, Flags, SheetInputs, bootstrap_curve, bootstrap_swaps,
-                         bootstrap_zeros, calculate_sheet, excel_round, extrapolation, get_llfr,
+                         bootstrap_zeros, calculate_sheet, excel_round, excel_round_value, extrapolation, get_llfr,
                          newton_raphson_forward_swap)
 
 # Workbook example ('Input Data & Extrapolation', 19 May 2026): market rates at the DLT maturities, read as
@@ -374,12 +374,48 @@ class TestExtrapolation(unittest.TestCase):
 
 
 class TestExcelRound(unittest.TestCase):
+    """Expected values are the results of Excel's ROUND for the same numbers."""
 
     def test_rounds_every_value_to_five_decimals(self) -> None:
         self.assertEqual(excel_round({1: 0.0207612, 2: 0.0326049}), {1: 0.02076, 2: 0.0326})
 
     def test_keeps_nan(self) -> None:
         self.assertTrue(math.isnan(excel_round({1: math.nan})[1]))
+
+    def test_near_ties_round_like_excel(self) -> None:
+        # ties at Excel's 15 significant digits, slightly below the tie in binary: Excel rounds up,
+        # Python's round() rounds down
+        cases: dict[float, float] = {0.018434999999999979: 0.01844, 0.037144999999999984: 0.03715,
+                                     0.055684999999999985: 0.05569, 0.020774999999999988: 0.02078}
+        for value, expected in cases.items():
+            self.assertEqual(excel_round_value(value), expected, msg=repr(value))
+            self.assertNotEqual(round(value, 5), expected, msg=repr(value))
+
+    def test_below_a_tie_at_15_digits_rounds_down(self) -> None:
+        # 0.0227949999999999 is below the tie even with 15 significant digits
+        self.assertEqual(excel_round_value(0.0227949999999999), 0.02279)
+
+    def test_halves_round_away_from_zero(self) -> None:
+        cases: dict[tuple[float, int], float] = {(0.031255, 5): 0.03126, (-0.031255, 5): -0.03126,
+                                                 (-0.018434999999999979, 5): -0.01844, (2.5, 0): 3.0,
+                                                 (-2.5, 0): -3.0, (1234.5, 0): 1235.0}
+        for (value, digits), expected in cases.items():
+            self.assertEqual(excel_round_value(value, digits), expected, msg=f"ROUND({value!r}, {digits})")
+
+    def test_other_digits_and_large_numbers(self) -> None:
+        self.assertEqual(excel_round_value(0.0326049, 3), 0.033)
+        self.assertEqual(excel_round_value(1234.5678, -2), 1200.0)
+        self.assertEqual(excel_round_value(1e30), 1e30)
+        self.assertEqual(excel_round_value(0.30000000000000004), 0.3)
+
+    def test_no_negative_zero(self) -> None:
+        # Excel's ROUND(-1E-9, 5) is 0; Python's round() gives -0.0, which a CSV file shows as "-0.0"
+        self.assertEqual(math.copysign(1.0, excel_round_value(-1e-9)), 1.0)
+        self.assertEqual(str(excel_round({1: -1e-9})[1]), "0.0")
+
+    def test_infinities_are_unchanged(self) -> None:
+        self.assertEqual(excel_round_value(math.inf), math.inf)
+        self.assertEqual(excel_round_value(-math.inf), -math.inf)
 
 
 class TestCalculateSheet(unittest.TestCase):
@@ -463,9 +499,22 @@ class TestCalculateSheetGovernmentBonds(unittest.TestCase):
                 self.assertAlmostEqual(zero[t], rate - 0.001, places=15, msg=f"maturity {t}")
 
     def test_rounding_after_the_compounding_conversion(self) -> None:
-        # 3y: 0.023795 - 0.001 = 0.022795 comes back from ln/exp as 0.0227949999...,
-        # so ROUND gives 0.02279 (as in Excel, L27), not 0.0228
+        # 3y: 0.023795 - 0.001 = 0.022795 comes back from ln/exp as 0.0227949999999999, below the tie
+        # even with Excel's 15 significant digits, so ROUND gives 0.02279 (as in Excel, L27), not 0.0228
         self.assertEqual(self.res["BASIC_RFR"][3], 0.02279)
+
+    def test_basic_rfr_rounds_like_the_workbook(self) -> None:
+        # Rates with six decimals ending in 5: up to the FSP the basic RFR (input rate - 10 bp) lands on a
+        # 5-decimal tie up to floating-point noise. The workbook, recalculated with these inputs, gives the
+        # values below; Python's round() would give 0.02077, 0.02765, 0.02978, 0.03046 and 0.03131.
+        inputs = example_inputs("GVT")
+        inputs["Rate"].update({1: 0.021775, 2: 0.022615, 3: 0.023825, 4: 0.024795, 5: 0.025725, 6: 0.026535,
+                               7: 0.027355, 8: 0.028025, 9: 0.028655, 10: 0.029285, 11: 0.029765, 12: 0.030305,
+                               13: 0.030785, 15: 0.031465, 20: 0.032315})
+        res = calculate_sheet(**inputs)
+        expected: Curve = {1: 0.02078, 9: 0.02766, 13: 0.02979, 15: 0.03047, 20: 0.03132}
+        for t, rate in expected.items():
+            self.assertEqual(res["BASIC_RFR"][t], rate, msg=f"maturity {t}")
 
     def test_llfr_is_calculated_from_the_market_rates(self) -> None:
         # a higher 30y rate raises the LLFR and the extrapolated rates, but not the rates up to the FSP

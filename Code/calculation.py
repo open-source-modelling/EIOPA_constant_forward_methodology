@@ -19,6 +19,7 @@ This module also defines the data types shared by the other modules.
 """
 
 import math
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TypedDict
 
 # Longest maturity of the curve when none is given; the VBA writes the literal 150 instead.
@@ -417,6 +418,31 @@ def extrapolation(InputRatesCC: Curve, RateType: str, FSP: int, UFR: float, LLFR
 # Sheet "Input Data & Extrapolation"
 # --------------------------------------------------------------------------
 
+def excel_round_value(value: float, digits: int = 5) -> float:
+    """Round one number like the worksheet function ROUND(value, digits).
+
+    Excel's ROUND works on the number with 15 significant digits and rounds a half away from zero.
+    Python's round() works on the exact binary value and rounds a half to even, so the two differ
+    for numbers within floating-point noise of a tie. Such numbers are common for government bond
+    rates quoted with six decimals: up to the FSP the basic RFR is the input rate minus the CRA,
+    e.g. 0.021775 - 0.001 comes back from the compounding conversion as 0.020774999999999988,
+    which ROUND rounds to 0.02078 and round() to 0.02077.
+
+    Args:
+        value: the number to round.
+        digits: number of decimals; 5 on the sheet.
+
+    Returns:
+        The rounded number; nan and infinities unchanged. As in Excel, a zero result is never -0.0.
+    """
+    if not math.isfinite(value):
+        return value
+    shown: Decimal = Decimal(f"{value:.15g}")           # the number as Excel holds it: 15 significant digits
+    if shown.as_tuple().exponent < -digits:             # more decimals than wanted (otherwise nothing to round)
+        shown = shown.quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_UP)   # a half away from zero
+    return float(shown) + 0.0                           # + 0.0: Excel has no negative zero
+
+
 def excel_round(curve: Curve, digits: int = 5) -> Curve:
     """Round every value of a curve, like the worksheet's ROUND(..., 5) applied to a whole column.
 
@@ -425,9 +451,9 @@ def excel_round(curve: Curve, digits: int = 5) -> Curve:
         digits: number of decimals; 5 on the sheet.
 
     Returns:
-        {maturity: rounded value}; nan stays nan.
+        {maturity: rounded value}, rounded with excel_round_value; nan stays nan.
     """
-    return {t: round(z, digits) for t, z in curve.items()}
+    return {t: excel_round_value(z, digits) for t, z in curve.items()}
 
 
 def calculate_sheet(Instrument: str, CouponFreq: int | None, CRA: float, UFR: float, alpha: float, dlt: Flags,
