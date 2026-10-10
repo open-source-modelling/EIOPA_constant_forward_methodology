@@ -26,7 +26,7 @@ that workbook exactly (see [Verification](#verification)).
 - [What changes](#what-changes)
 - [The method](#the-method)
 - [Quick start](#quick-start)
-- [Inputs and outputs](#inputs-and-outputs): files, columns and [example results](#example-results)
+- [Inputs and outputs](#inputs-and-outputs): files and columns
 - [Using the algorithm in your own code](#using-the-algorithm-in-your-own-code): inputs and outputs of
   [`calculate_sheet`](#inputs-of-calculate_sheet)
 - [Verification](#verification)
@@ -166,7 +166,7 @@ beyond it. The basic risk-free rate continues to 150 years through the extrapola
 To calculate the curve from government bonds instead, set `Instrument` to `GVT` in
 `Input/parameters.csv` and put the bond zero rates in `Input/curve.csv`. The run then prints
 `Instrument: GVT (government bonds)` and writes `government_bonds_curves.csv` and
-`government_bonds_parameters.csv`. [Example results](#example-results) compares both curves.
+`government_bonds_parameters.csv`.
 
 Invalid inputs stop the run with a message listing every problem, for example:
 
@@ -259,39 +259,6 @@ Columns `Parameter, Value`:
 | `LLFR (CC)` | Last liquid forward rate, calculated from the bootstrapped curve and the LLFR weights, continuously compounded | L22 |
 
 All rates are decimals written with full precision.
-
-### Example results
-
-The workbook's example inputs (`Input/`: CRA 10 bp, UFR 3.3%, α 11%, FSP 20) give these
-results, once with the rates read as par swap rates and once as government bond zero rates:
-
-| | Input rate | Swaps: bootstrapped (CC) | Swaps: basic RFR | Government bonds: bootstrapped (CC) | Government bonds: basic RFR |
-|---|---:|---:|---:|---:|---:|
-| **LLFR (CC)** | | | 3.22489% | | 3.18830% |
-| 1 | 2.1760% | 2.05474% | 2.076% | 2.05474% | 2.076% |
-| 2 | 2.2621% | 2.13997% | 2.163% | 2.13906% | 2.162% |
-| 5 | 2.5690% | 2.44854% | 2.479% | 2.43901% | 2.469% |
-| 10 | 2.9270% | 2.82286% | 2.863% | 2.78778% | 2.827% |
-| 15 | 3.1430% | 3.06008% | 3.107% | 2.99762% | 3.043% |
-| 20 (FSP) | 3.2330% | 3.15865% | 3.209% | 3.08492% | 3.133% |
-| 25 | 3.2500% | 3.16758% | 3.224% | 3.10141% | 3.157% |
-| 30 | 3.2431% | 3.14607% | 3.235% | 3.09472% | 3.176% |
-| 40 | 3.2060% | 3.07181% | 3.250% | 3.05874% | 3.204% |
-| 50 | 3.1310% | 2.92567% | 3.260% | 2.98597% | 3.223% |
-| 60 | | | 3.266% | | 3.235% |
-| 100 | | | 3.280% | | 3.261% |
-| 150 | | | 3.287% | | 3.274% |
-
-- **Government bonds.** Up to the FSP the basic RFR is the input rate minus the CRA, for example
-  2.569% − 0.10% = 2.469% at 5 years. The bootstrapped rate is the same rate, continuously
-  compounded.
-- **Swaps.** Only at 1 year is the result the input rate minus the CRA, because there the par rate
-  and the zero rate coincide. For this rising curve the zero rates lie above the par rates, so the
-  swap curve is higher than the government bond curve.
-- **Beyond the FSP** both curves follow the extrapolation from their own LLFR towards the UFR. The
-  market rates at 25, 30, 40 and 50 years enter only through the LLFR.
-
----
 
 ## Using the algorithm in your own code
 
