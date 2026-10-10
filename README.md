@@ -90,7 +90,7 @@ the first maturity with a positive LLFR weight as the FSP.
 
 **Swaps.** Each swap is valued at par, with its rate reduced by the CRA:
 
-$$\frac{s_{t_k} - \text{CRA}}{m}\sum_{j=1}^{m\,t_k} d_{j/m} \;+\; d_{t_k} = 1 .$$
+$$\frac{s_{t_k} - \text{CRA}}{m}\sum_{j=1}^{m\,t_k} d_{j/m} + d_{t_k} = 1 .$$
 
 Between consecutive DLT maturities the periodic forward rate is constant. For the first DLT
 maturity it equals the periodic coupon. For each later one it is the single unknown of the par
