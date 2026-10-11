@@ -469,5 +469,5 @@ in a public repository, or link to them instead.
 
 ## License
 
-The code is released under the MIT License (see `LICENSE`). The license does not cover EIOPA's
+The code is released under the MIT License. The license does not cover EIOPA's
 documentation and workbook in `Sources/`.
