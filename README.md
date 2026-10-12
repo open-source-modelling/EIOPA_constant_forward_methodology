@@ -141,16 +141,16 @@ workbook rounds them to 5 decimals.
 ### 5. Volatility adjustment (§9.3, §9.4, §10)
 
 EIOPA publishes, for each currency, the risk-corrected currency spread $\text{RCS}_{cu}$ and, for
-each euro area country, the risk-corrected country spread $\text{RCS}_{co}$ and the
-debt-to-total-assets ratio $\text{DTAR}_{co}$. The undertaking adds its own sensitivity.
+each euro area country, the risk-corrected country spread $RCS_{co}$ and the
+debt-to-total-assets ratio $DTAR_{co}$. The undertaking adds its own sensitivity.
 
 **Curve with a VA (§10).** A VA is added to the one-year forward rates of the basic RFR, and the
 first term of the LLFR is adjusted in the same way:
 
-$$f^{VA,c}_{t-1,t} = f^c_{t-1,t} + \ln(1 + \text{VA}), \qquad \text{LLFR}^{VA,c} = \text{LLFR}^c + w_{t_F} \cdot \ln(1 + \text{VA}).$$
+$$f^{VA,c}_{t-1,t} = f^c_{t-1,t} + \ln(1 + VA), \qquad LLFR^{VA,c} = LLFR^c + w_{t_F} \cdot \ln(1 + VA).$$
 
 Up to the FSP the zero rates are the averages of these forwards; beyond it the curve is
-extrapolated as in step 4, from $\text{LLFR}^{VA,c}$. Like the workbook, the code takes the forwards
+extrapolated as in step 4, from $LLFR^{VA,c}$. Like the workbook, the code takes the forwards
 from the basic RFR as published, i.e. rounded to 5 decimals.
 
 **CSSR (§9.3.2).** The *CSSR curve* is the curve with a notional VA of $85\% \cdot \text{RCS}_{cu}$.
