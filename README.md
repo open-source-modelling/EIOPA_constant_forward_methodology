@@ -111,7 +111,7 @@ $$f^c(t_{k-1}, t_k) = \frac{t_k \cdot z^c_{t_k} - t_{k-1} \cdot z^c_{t_{k-1}}}{t
 
 No solver is needed and the DLT rates are reproduced exactly. Before the first DLT maturity its
 rate is held flat. The workbook does this in the VBA function `BootstrapZeros`; `BootstrapCurve`
-chooses between it and `BootstrapSwaps` from the instrument type (cell H11).
+chooses between it and `BootstrapSwaps` from the instrument type.
 
 ### 3. Last liquid forward rate (§8.3, §8.5.6)
 
