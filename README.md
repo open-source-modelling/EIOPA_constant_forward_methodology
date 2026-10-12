@@ -180,9 +180,7 @@ be negative (§9.3.6).
 
 ## Quick start
 
-Requirements: Python 3.10 or later, because the code uses the `X | Y` type syntax. It has been run
-and tested with Python 3.13; older versions were only checked with a type checker. The calculation
-needs no other packages.
+Requirements: Python 3.10 or later.
 
 ```bash
 python Code/main.py
