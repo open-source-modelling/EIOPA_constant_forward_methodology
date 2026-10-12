@@ -14,8 +14,9 @@ It is written for actuaries who want to
 - **use the algorithm in their own code**: `Code/calculation.py` depends only on the Python
   standard library and can be copied into another project as it is.
 
-The code is a line-by-line port of the VBA in EIOPA's demonstration workbook and reproduces
-that workbook exactly (see [Verification](#verification)).
+The basic risk-free rate is a line-by-line port of the VBA in EIOPA's demonstration workbook, and
+the VA a port of the workbook's worksheet formulas, for which there is no VBA. Both reproduce the
+workbook exactly (see [Verification](#verification)).
 
 > **Disclaimer.** This is not an EIOPA product and is not endorsed by EIOPA. It is provided for
 > educational purposes, without warranty. EIOPA publishes the official risk-free rate term
@@ -254,7 +255,7 @@ Input error: invalid inputs:
 ```
 
 Each step checks its own inputs. Invalid inputs for the basic risk-free rate stop the run before
-anything is written, so `Output/` stays empty. Invalid VA inputs (`Input error: invalid VA
+anything is written; `Output/` has already been deleted and is not created again. Invalid VA inputs (`Input error: invalid VA
 inputs: ...`) stop it after the first step: the basic risk-free rate is saved, the VA is not.
 
 ---
@@ -398,6 +399,8 @@ are empty.
 | `Total VA LLFR (CC)` | LLFR of the curve with VA, continuously compounded | VA Term Structures K20 |
 
 All rates are decimals written with full precision.
+
+---
 
 ## Using the algorithm in your own code
 
@@ -543,8 +546,10 @@ calculate the single values.
 - Names follow the VBA in EIOPA's workbook to make the two easy to compare: `bootstrap_curve` is
   `BootstrapCurve`, `bootstrap_swaps` is `BootstrapSwaps`, `bootstrap_zeros` is `BootstrapZeros`,
   `get_llfr` is `GetLLFR`, and `Instrument`, `Rate`, `CouponFreq`, `LLFRweightsIn`, `MaxTenor`
-  and so on keep their VBA names. Every function's docstring describes its inputs,
-  outputs and errors, with references to the documentation.
+  and so on keep their VBA names. The VA has no VBA, so its names follow the workbook's named
+  ranges without the `R.`/`V.` prefix: `RCS_CU`, `RCS_CO`, `DTTA`, `MVFI`, `MVFI_NOTIONAL`,
+  `BEL_NOTIONAL`, `NOTIONAL_VA`, `CSSR`, `TOTAL_VA`, `W_CO` and so on. Every function's docstring
+  describes its inputs, outputs and errors, with references to the documentation.
 
 ---
 
@@ -565,8 +570,9 @@ calculate the single values.
   its two intermediate values, the currency VA, the country adjustment factor, the total VA, both
   LLFRs, and the CSSR curve and the curve with VA at all 150 maturities. The macro VA, switched
   off in the workbook's example, is tested against the formula of §9.4.
-- **Unit tests** cover the calculation, the validation, reading and writing, and the main script,
-  with full line and branch coverage of the calculation, validation and input/output modules.
+- **Unit tests** cover the calculation, the VA, the validation, reading and writing, and the main
+  script, with full line and branch coverage of every module (the main script's command-line part
+  is run in a separate process).
   Several tests check mathematical properties rather than stored numbers: every DLT swap reprices
   at par, every DLT bond rate is reproduced, a flat par curve gives a flat zero curve, forwards are
   constant between DLT points, and the extrapolated forward follows the formula and converges to
@@ -658,8 +664,16 @@ Code/
   tests/               unit tests
 Input/                 curve.csv, parameters.csv and the optional va_parameters.csv
 Output/                swaps_*.csv and government_bonds_*.csv (curves and parameters, with VA: va_*)
+Examples/
+  EIOPA_Example/       the workbook's example: inputs (Input/) and a copy of the workbook
+  Example_September_2026/
+                       inputs for 30 September 2026 (Input_EUR, Input_IS, Input_UK), EIOPA's
+                       published files for that date (EIOPA_RFR_20260930), charts and a copy of
+                       the workbook
 Sources/               EIOPA's technical documentation and demonstration workbook (example inputs)
 ```
+
+To run an example, copy the files of its input folder into `Input/`.
 
 ---
 

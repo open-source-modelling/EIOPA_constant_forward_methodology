@@ -79,6 +79,11 @@ class TestReadCsv(TempFolderTestCase):
         rows = read_csv(self.write("a.csv", "A;B\n1,5;2\n"))
         self.assertEqual(rows, [{"A": "1,5", "B": "2"}])
 
+    def test_header_with_both_separators_is_comma_separated(self) -> None:
+        # ';' counts as the separator only if the header line has no ','
+        rows = read_csv(self.write("a.csv", "A;B,C\nx;y,z\n"))
+        self.assertEqual(rows, [{"A;B": "x;y", "C": "z"}])
+
     def test_byte_order_mark_is_removed(self) -> None:
         # Excel's "CSV UTF-8" adds a byte order mark in front of the first column name
         rows = read_csv(self.write("a.csv", "A,B\n1,2\n", encoding="utf-8-sig"))

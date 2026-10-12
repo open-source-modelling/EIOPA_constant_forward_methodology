@@ -161,11 +161,13 @@ class TestCalculateCSSRSheet(unittest.TestCase):
         self.assertEqual(len(self.cssr["CSSR_CURVE"]), 150)
 
     def test_without_the_values_only_the_curve_is_calculated(self) -> None:
-        va = example_va_inputs()
-        va["MVFI_NOTIONAL"] = None
-        cssr = calculate_cssr_sheet(self.inputs, self.res, va)
-        self.assertEqual((cssr["PVBP_MVFI"], cssr["PVBP_BEL"], cssr["CSSR"]), (None, None, None))
-        self.assertEqual(cssr["CSSR_CURVE"], self.cssr["CSSR_CURVE"])
+        # any one of the four values missing is enough (validation rejects a partial set before)
+        for missing in ("MVFI", "MVFI_NOTIONAL", "BEL", "BEL_NOTIONAL"):
+            va = example_va_inputs()
+            va[missing] = None                                       # type: ignore[literal-required]
+            cssr = calculate_cssr_sheet(self.inputs, self.res, va)
+            self.assertEqual((cssr["PVBP_MVFI"], cssr["PVBP_BEL"], cssr["CSSR"]), (None, None, None), msg=missing)
+            self.assertEqual(cssr["CSSR_CURVE"], self.cssr["CSSR_CURVE"])
 
     def test_government_bonds(self) -> None:
         inputs = example_inputs("GVT")
@@ -223,10 +225,20 @@ class TestCalculateVASheet(unittest.TestCase):
         self.assertEqual(self.va_sheet(va)["MACRO_VA"], 0)
 
     def test_macro_va_needs_the_country_values(self) -> None:
-        va = example_va_inputs()
-        va.update(USA=None, MACROVA_SELECTED=True, DTTA=None)
-        with self.assertRaisesRegex(ValueError, "macro VA needs"):
-            self.va_sheet(va)
+        for missing in ("RCS_CO", "DTTA"):
+            va = example_va_inputs()
+            va.update({"USA": None, "MACROVA_SELECTED": True, missing: None})
+            with self.assertRaisesRegex(ValueError, "macro VA needs", msg=missing):
+                self.va_sheet(va)
+
+    def test_country_adjustment_factor_without_the_country_values(self) -> None:
+        # without macro VA the country values are optional; the factor is then #N/A
+        for missing in ("RCS_CO", "DTTA"):
+            va = example_va_inputs()
+            va[missing] = None                                       # type: ignore[literal-required]
+            res = self.va_sheet(va)
+            self.assertTrue(math.isnan(res["W_CO"]), msg=missing)
+            self.assertEqual(res["TOTAL_VA"], 0.0034)
 
     def test_cssr_of_zero_gives_the_basic_rfr(self) -> None:
         res = self.va_sheet(example_va_inputs(), CSSR=0.0)

@@ -104,6 +104,19 @@ class TestValidateInputs(unittest.TestCase):
         inputs["Rate"][10] = 2.927
         self.assertInvalid(inputs, "Input Rate must be a decimal", "[10]")
 
+    def test_rates_of_minus_100_percent_or_less(self) -> None:
+        # the lower end of the range: a rate of -100% or less is not a decimal rate either
+        inputs = example_inputs()
+        inputs["UFR"] = -1.0
+        inputs["Rate"][10] = -2.927
+        self.assertInvalid(inputs, "UFR must be a decimal", "Input Rate must be a decimal", "[10]")
+
+    def test_negative_rates_are_valid(self) -> None:
+        inputs = example_inputs()
+        inputs["UFR"] = -0.005
+        inputs["Rate"] = {t: r - 0.035 for t, r in inputs["Rate"].items()}
+        validate_inputs(inputs)
+
     def test_no_dlt_maturity_with_a_rate(self) -> None:
         inputs = example_inputs()
         inputs["dlt"] = {t: 0 for t in inputs["dlt"]}
@@ -179,6 +192,11 @@ class TestValidateVAInputs(unittest.TestCase):
         va.update(RCS_CU=100, RCS_CO=140)
         self.assertInvalid(va, "Currency RCS must be a decimal", "Country RCS must be a decimal")
 
+    def test_rcs_of_minus_100_percent_or_less(self) -> None:
+        va = example_va_inputs()
+        va.update(RCS_CU=-1.0, RCS_CO=-140)
+        self.assertInvalid(va, "Currency RCS must be a decimal", "Country RCS must be a decimal")
+
     def test_some_values_for_the_cssr_missing(self) -> None:
         va = example_va_inputs()
         va.update(MVFI_NOTIONAL=None, BEL_NOTIONAL=None)
@@ -204,6 +222,17 @@ class TestValidateVAInputs(unittest.TestCase):
         va = example_va_inputs()
         va.update(USA=None, MACROVA_SELECTED=True, DTTA=50)
         self.assertInvalid(va, "Debt to Total Assets must be between 0 and 1")
+
+    def test_negative_debt_to_total_assets(self) -> None:
+        va = example_va_inputs()
+        va.update(USA=None, MACROVA_SELECTED=True, DTTA=-0.1)
+        self.assertInvalid(va, "Debt to Total Assets must be between 0 and 1")
+
+    def test_debt_to_total_assets_of_zero_and_one_are_valid(self) -> None:
+        va = example_va_inputs()
+        for DTTA in (0.0, 1.0):
+            va.update(USA=None, MACROVA_SELECTED=True, DTTA=DTTA)
+            validate_va_inputs(va)
 
     def test_macro_va_and_usa_together(self) -> None:
         va = example_va_inputs()

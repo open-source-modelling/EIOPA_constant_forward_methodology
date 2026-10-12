@@ -155,6 +155,23 @@ class TestPrintVASummary(unittest.TestCase):
         self.assertNotIn("Total VA", output)
         self.assertIn("       1     2.076%      2.944%      #N/A", output.splitlines())
 
+    def test_with_cssr_but_without_va_results(self) -> None:
+        # a CSSR alone is not enough to show a VA: the VA results are needed as well
+        cssr = calculate_cssr_sheet(self.inputs, self.res, example_va_inputs())
+        _, output = printed(print_va_summary, self.res, cssr, None)
+        self.assertIn("CSSR        : not calculated", output)
+        self.assertNotIn("Total VA", output)
+
+    def test_shorter_curve_ends_at_its_max_maturity(self) -> None:
+        inputs = example_inputs()
+        inputs["MAX_MATURITY"] = 55
+        res = calculate_sheet(**inputs)
+        va = example_va_inputs()
+        cssr = calculate_cssr_sheet(inputs, res, va)
+        _, output = printed(print_va_summary, res, cssr, calculate_va_sheet(inputs, res, va, 0.5))
+        maturities = [int(line.split()[0]) for line in output.splitlines() if line.split()[0].isdigit()]
+        self.assertEqual(maturities, [1, 2, 5, 10, 15, 20, 21, 25, 30, 40, 50, 55])
+
 
 class TestRun(unittest.TestCase):
 
