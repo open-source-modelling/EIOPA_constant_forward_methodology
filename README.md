@@ -140,7 +140,7 @@ workbook rounds them to 5 decimals.
 
 ### 5. Volatility adjustment (§9.3, §9.4, §10)
 
-EIOPA publishes, for each currency, the risk-corrected currency spread $\text{RCS}_{cu}$ and, for
+EIOPA publishes, for each currency, the risk-corrected currency spread $RCS_{cu}$ and, for
 each euro area country, the risk-corrected country spread $RCS_{co}$ and the
 debt-to-total-assets ratio $DTAR_{co}$. The undertaking adds its own sensitivity.
 
