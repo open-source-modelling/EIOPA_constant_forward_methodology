@@ -1,15 +1,21 @@
-"""EIOPA basic risk-free interest rate term structure from swaps or government bonds: main script.
+"""EIOPA risk-free interest rate term structures from swaps or government bonds, with VA: main script.
 
 Usage (from any folder):
     python Code/main.py
 
-Reads the CSV files in "Input", validates them, calculates the curves and saves them in
-"Output". Both folders sit in the project folder, next to the Code folder. Excel is not used.
+Deletes the folder "Output", then runs two steps (function run):
+    run_basic_rfr   reads curve.csv and parameters.csv from "Input", validates them, calculates
+                    the basic risk-free rate and saves it in "Output";
+    run_va          only if "Input" contains va_parameters.csv: reads and validates it, calculates
+                    the CSSR curve and, if the values on it are given, the CSSR, the VA and the
+                    curve with VA, and saves them in "Output".
+Both folders sit in the project folder, next to the Code folder. Excel is not used.
 
 Modules:
     data_io.py       reading Input, writing Output
     validation.py    validation of the inputs
     calculation.py   the calculation (port of the VBA module mExtrapolation) and shared types
+    volatility_adjustment.py  the undertaking-specific VA: CSSR curve, CSSR and curve with VA
     main.py          this script: brings them together
     tests/           unit tests (python -m unittest discover -s Code, or python -m pytest Code)
 
@@ -25,13 +31,21 @@ Inputs, in the folder "Input":
                       Coupon Frequency (swaps only), UFR, Convergence, CRA (sheet cells H12,
                       H14:H16; CRA in basis points, UFR and Convergence as decimals) and
                       Max Maturity (longest maturity of the curves in years; 150 on the sheet).
-Both files may use ',' or ';' as separator and '.' or ',' as decimal mark.
+    va_parameters.csv optional; columns Parameter, Value with the rows Currency RCS, and
+                      optionally Country RCS, Debt to Total Assets, Use Macro VA (0 or 1), USA,
+                      MV Fixed Income, MV Fixed Income CSSR Curve, BEL and BEL CSSR Curve.
+                      Without it, no VA is calculated. Without the last four values, only the
+                      CSSR curve is calculated, on which the assets and liabilities are valued.
+All files may use ',' or ';' as separator and '.' or ',' as decimal mark.
 
-Results, in the folder "Output" (created if missing, files overwritten on each run), named after
+Results, in the folder "Output" (deleted and created again on each run), named after
 the instrument: swaps_*.csv for swaps, government_bonds_*.csv for government bonds:
     *_curves.csv                maturity 1..Max Maturity, DLT, LLFR weight, input rate,
                                 bootstrapped zero rate CC, basic RFR
     *_parameters.csv            parameters used, FSP and LLFR
+    *_va_curves.csv             with va_parameters.csv: maturity 1..Max Maturity, basic RFR,
+                                CSSR curve, VA curve
+    *_va_parameters.csv         with va_parameters.csv: VA inputs, notional VA, CSSR, VA
 Rates are decimals with full precision; nan (#N/A) is written as an empty cell.
 """
 
@@ -40,8 +54,13 @@ import sys
 from pathlib import Path
 
 from calculation import INSTRUMENTS, SheetInputs, SheetResults, calculate_sheet
-from data_io import INPUT_DIR, OUTPUT_DIR, read_inputs, save_results
-from validation import validate_inputs
+from data_io import (INPUT_DIR, OUTPUT_DIR, VA_PARAMETERS_FILE, clear_output_folder, read_inputs, read_va_inputs,
+                     save_results, save_va_results)
+from validation import validate_inputs, validate_va_inputs
+from volatility_adjustment import CSSRResults, VAInputs, VAResults, calculate_cssr_sheet, calculate_va_sheet
+
+# maturities shown in the summaries (those below the curves' longest maturity), followed by the longest maturity
+SUMMARY_MATURITIES: tuple[int, ...] = (1, 2, 5, 10, 15, 20, 21, 25, 30, 40, 50, 60, 80, 100)
 
 
 def print_summary(res: SheetResults) -> None:
@@ -61,14 +80,59 @@ def print_summary(res: SheetResults) -> None:
     print(f"LLFR : {res['LLFR']:.8%} (continuously compounded)")
     print(f"{'Maturity':>8} {'Bootstrapped CC':>16} {'Basic RFR':>10}")
     MAX_MATURITY: int = max(res["BASIC_RFR"])
-    for t in [t for t in (1, 2, 5, 10, 15, 20, 21, 25, 30, 40, 50, 60, 80, 100) if t < MAX_MATURITY] + [MAX_MATURITY]:
+    for t in [t for t in SUMMARY_MATURITIES if t < MAX_MATURITY] + [MAX_MATURITY]:
         boot: float = res["BOOTSTRAPPED_CURVE"][t]
         boot_text: str = "#N/A" if math.isnan(boot) else f"{boot:.5%}"
         print(f"{t:>8} {boot_text:>16} {res['BASIC_RFR'][t]:>10.3%}")
 
 
-def run(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> SheetResults:
-    """Read and validate the inputs, calculate the curves, print the instrument and a summary, and save the results.
+def print_va_summary(res: SheetResults, cssr: CSSRResults, va_res: VAResults | None) -> None:
+    """Print the notional VA, the CSSR, the VA and the curves with VA at a selection of maturities.
+
+    The maturities are those of print_summary. Without a CSSR (the values on the CSSR curve are not
+    yet given), only the CSSR curve is shown, with a note on what to do next.
+
+    Args:
+        res: the basic RFR, from calculation.calculate_sheet.
+        cssr: the results of volatility_adjustment.calculate_cssr_sheet.
+        va_res: the results of volatility_adjustment.calculate_va_sheet; None without a CSSR.
+
+    Returns:
+        None; the summary is printed to standard output.
+    """
+    print(f"Notional VA : {cssr['NOTIONAL_VA'] * 10000:.0f} bp")
+    if cssr["CSSR"] is None or va_res is None:
+        print(f"CSSR        : not calculated; value the fixed income assets and the best estimate on the CSSR curve "
+              f"and enter the four values in {VA_PARAMETERS_FILE}")
+    else:
+        print(f"CSSR        : {cssr['CSSR']:.6f}")
+        print(f"Currency VA : {va_res['CURRENCY_VA'] * 10000:.2f} bp")
+        if not math.isnan(va_res["MACRO_VA"]):
+            print(f"Macro VA    : {va_res['MACRO_VA'] * 10000:.2f} bp")
+        print(f"Total VA    : {va_res['TOTAL_VA'] * 10000:.0f} bp")
+    print(f"{'Maturity':>8} {'Basic RFR':>10} {'CSSR Curve':>11} {'VA Curve':>9}")
+    MAX_MATURITY: int = max(res["BASIC_RFR"])
+    for t in [t for t in SUMMARY_MATURITIES if t < MAX_MATURITY] + [MAX_MATURITY]:
+        va_text: str = f"{va_res['VA_CURVE'][t]:.3%}" if va_res else "#N/A"
+        print(f"{t:>8} {res['BASIC_RFR'][t]:>10.3%} {cssr['CSSR_CURVE'][t]:>11.3%} {va_text:>9}")
+
+
+def print_saved(paths: list[Path]) -> None:
+    """Print an empty line and the path of every saved file.
+
+    Args:
+        paths: the saved files.
+
+    Returns:
+        None; the paths are printed to standard output.
+    """
+    print()
+    for path in paths:
+        print(f"Saved {path}")
+
+
+def run_basic_rfr(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> tuple[SheetInputs, SheetResults]:
+    """The basic risk-free rate: read and validate curve.csv and parameters.csv, calculate, print and save.
 
     Nothing is printed or saved if the inputs cannot be read or are invalid.
 
@@ -77,7 +141,7 @@ def run(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> SheetResu
         output_dir: folder for the results; the project's Output folder by default.
 
     Returns:
-        The results of calculation.calculate_sheet.
+        The inputs and the results of calculation.calculate_sheet, which run_va builds on.
 
     Raises:
         FileNotFoundError: if an input file is missing.
@@ -88,9 +152,69 @@ def run(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> SheetResu
     res: SheetResults = calculate_sheet(**inputs)
     print(f"Instrument: {inputs['Instrument']} ({INSTRUMENTS[inputs['Instrument']]})")
     print_summary(res)
-    print()
-    for saved in save_results(inputs, res, output_dir):
-        print(f"Saved {saved}")
+    print_saved(save_results(inputs, res, output_dir))
+    return inputs, res
+
+
+def run_va(inputs: SheetInputs, res: SheetResults, input_dir: Path = INPUT_DIR,
+           output_dir: Path = OUTPUT_DIR) -> tuple[CSSRResults, VAResults | None]:
+    """The volatility adjustment: read and validate va_parameters.csv, calculate, print and save.
+
+    Always calculates the CSSR curve. When the four values on it are given, also the CSSR, the VA
+    and the curve with VA; otherwise the summary says what to do next. Nothing is printed or saved
+    if the VA inputs cannot be read or are invalid.
+
+    Args:
+        inputs: the inputs of the basic RFR, from run_basic_rfr.
+        res: the basic RFR, from run_basic_rfr.
+        input_dir: folder with va_parameters.csv; the project's Input folder by default.
+        output_dir: folder for the results; the project's Output folder by default.
+
+    Returns:
+        The results of volatility_adjustment.calculate_cssr_sheet and calculate_va_sheet; the
+        latter is None without a CSSR.
+
+    Raises:
+        FileNotFoundError: if va_parameters.csv is missing.
+        ValueError: if the VA inputs cannot be read or are invalid; the message describes the problems.
+    """
+    va: VAInputs | None = read_va_inputs(input_dir)
+    if va is None:
+        raise FileNotFoundError(f"Input file not found: {input_dir / VA_PARAMETERS_FILE}")
+    validate_va_inputs(va)
+    cssr: CSSRResults = calculate_cssr_sheet(inputs, res, va)
+    va_res: VAResults | None = calculate_va_sheet(inputs, res, va, cssr["CSSR"]) if cssr["CSSR"] is not None else None
+    print_va_summary(res, cssr, va_res)
+    print_saved(save_va_results(inputs, res, va, cssr, va_res, output_dir))
+    return cssr, va_res
+
+
+def run(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR) -> SheetResults:
+    """Run the whole calculation: delete the output folder, then run_basic_rfr and, with va_parameters.csv, run_va.
+
+    The output folder is deleted first, so that it only ever holds the results of this run: if the
+    run stops with an error, no results of an earlier run are left behind. Each part validates its
+    own inputs; invalid VA inputs stop the run after the basic RFR has been saved.
+
+    Args:
+        input_dir: folder with curve.csv, parameters.csv and optionally va_parameters.csv; the
+            project's Input folder by default.
+        output_dir: folder for the results; the project's Output folder by default. It is deleted
+            and created again.
+
+    Returns:
+        The results of calculation.calculate_sheet.
+
+    Raises:
+        FileNotFoundError: if an input file is missing.
+        ValueError: if the inputs cannot be read or are invalid, or the output folder cannot be
+            deleted safely; the message describes the problems.
+    """
+    clear_output_folder(output_dir, input_dir)
+    inputs, res = run_basic_rfr(input_dir, output_dir)
+    if (input_dir / VA_PARAMETERS_FILE).exists():
+        print()
+        run_va(inputs, res, input_dir, output_dir)
     return res
 
 

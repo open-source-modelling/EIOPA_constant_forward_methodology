@@ -6,9 +6,11 @@ work from any working directory.
 
 import csv
 import math
+import shutil
 from pathlib import Path
 
 from calculation import INSTRUMENTS, Curve, Flags, SheetInputs, SheetResults
+from volatility_adjustment import CSSRResults, VAInputs, VAResults
 
 PROJECT_DIR: Path = Path(__file__).resolve().parent.parent
 INPUT_DIR: Path = PROJECT_DIR / "Input"
@@ -16,10 +18,16 @@ OUTPUT_DIR: Path = PROJECT_DIR / "Output"
 
 CURVE_FILE: str = "curve.csv"
 PARAMETERS_FILE: str = "parameters.csv"
+VA_PARAMETERS_FILE: str = "va_parameters.csv"     # optional: without it, no VA is calculated
 # result files per instrument type: (curves, parameters)
 OUTPUT_FILES: dict[str, tuple[str, str]] = {
     "SWP": ("swaps_curves.csv", "swaps_parameters.csv"),
     "GVT": ("government_bonds_curves.csv", "government_bonds_parameters.csv"),
+}
+# VA result files per instrument type: (curves, parameters)
+VA_OUTPUT_FILES: dict[str, tuple[str, str]] = {
+    "SWP": ("swaps_va_curves.csv", "swaps_va_parameters.csv"),
+    "GVT": ("government_bonds_va_curves.csv", "government_bonds_va_parameters.csv"),
 }
 
 CURVE_COLUMNS: list[str] = ["Maturity", "DLT", "LLFR Weight", "Input Rate"]
@@ -83,6 +91,22 @@ def parse_number(text: str, where: str) -> float:
         raise ValueError(f"{where}: '{text}' is not a number") from None
 
 
+def read_parameters(path: Path) -> dict[str, str]:
+    """Read a parameters file with the columns Parameter and Value.
+
+    Args:
+        path: the CSV file.
+
+    Returns:
+        {parameter name in lower case: value text}.
+
+    Raises:
+        FileNotFoundError: if the file does not exist.
+        ValueError: if a row cannot be read, see read_csv.
+    """
+    return {row.get("Parameter", "").lower(): row.get("Value", "") for row in read_csv(path)}
+
+
 def read_inputs(folder: Path = INPUT_DIR) -> SheetInputs:
     """Read the inputs from parameters.csv and curve.csv.
 
@@ -108,8 +132,7 @@ def read_inputs(folder: Path = INPUT_DIR) -> SheetInputs:
             curve, the line.
     """
     parameters_path: Path = folder / PARAMETERS_FILE
-    values: dict[str, str] = {row.get("Parameter", "").lower(): row.get("Value", "")
-                              for row in read_csv(parameters_path)}
+    values: dict[str, str] = read_parameters(parameters_path)
     Instrument: str = values.get("instrument", "").upper()
     missing: list[str] = [name for name in PARAMETER_NAMES if not values.get(name.lower())
                           and not (name == "Coupon Frequency" and Instrument == "GVT")]
@@ -176,6 +199,62 @@ def read_inputs(folder: Path = INPUT_DIR) -> SheetInputs:
     )
 
 
+def read_va_inputs(folder: Path = INPUT_DIR) -> VAInputs | None:
+    """Read the VA inputs from va_parameters.csv, if the file exists.
+
+    Only Currency RCS is required. Country RCS and Debt to Total Assets are needed for the macro
+    VA; Use Macro VA is 1 to add it and 0 (or empty) otherwise; USA is the undertaking-specific
+    adjustment, empty if not used. The four values for the CSSR (MV Fixed Income, MV Fixed Income
+    CSSR Curve, BEL, BEL CSSR Curve) stay empty until the undertaking has valued its assets and
+    liabilities on the CSSR curve. validation.validate_va_inputs checks whether the values make sense.
+
+    Args:
+        folder: folder with va_parameters.csv; the project's Input folder by default.
+
+    Returns:
+        VAInputs, with None for every empty value; None if the file does not exist.
+
+    Raises:
+        ValueError: if Currency RCS is missing, a value is not a number, or Use Macro VA is not 0 or 1.
+    """
+    path: Path = folder / VA_PARAMETERS_FILE
+    if not path.exists():
+        return None
+    values: dict[str, str] = read_parameters(path)
+    if not values.get("currency rcs"):
+        raise ValueError(f"{path}: missing parameter Currency RCS")
+
+    def optional(name: str) -> float | None:
+        """Value of one parameter from va_parameters.csv.
+
+        Args:
+            name: the parameter name as in the file (case does not matter).
+
+        Returns:
+            The value as a number; None if the parameter is missing or empty.
+
+        Raises:
+            ValueError: if the value is not a number.
+        """
+        text: str = values.get(name.lower(), "")
+        return parse_number(text, f"{path.name} {name}") if text else None
+
+    use_macro_va: float | None = optional("Use Macro VA")
+    if use_macro_va not in (None, 0, 1):
+        raise ValueError(f"{path.name} Use Macro VA: must be 0 or 1 (is {use_macro_va})")
+    return VAInputs(
+        RCS_CU=parse_number(values["currency rcs"], f"{path.name} Currency RCS"),
+        RCS_CO=optional("Country RCS"),
+        DTTA=optional("Debt to Total Assets"),
+        MVFI=optional("MV Fixed Income"),
+        MVFI_NOTIONAL=optional("MV Fixed Income CSSR Curve"),
+        BEL=optional("BEL"),
+        BEL_NOTIONAL=optional("BEL CSSR Curve"),
+        MACROVA_SELECTED=use_macro_va == 1,
+        USA=optional("USA"),
+    )
+
+
 # --------------------------------------------------------------------------
 # Writing (folder Output)
 # --------------------------------------------------------------------------
@@ -191,6 +270,33 @@ def csv_value(x: str | int | float) -> str | int | float:
         with full precision).
     """
     return "" if isinstance(x, float) and math.isnan(x) else x
+
+
+def clear_output_folder(folder: Path = OUTPUT_DIR, input_dir: Path = INPUT_DIR) -> None:
+    """Delete the output folder and everything in it, so that no results of an earlier run are left behind.
+
+    As a safeguard, a folder that contains the input folder or this Code folder is not deleted.
+
+    Args:
+        folder: the output folder; the project's Output folder by default. Nothing happens if it
+            does not exist.
+        input_dir: the input folder of the run; the project's Input folder by default.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: if ``folder`` is a file, or contains the input folder or the Code folder.
+    """
+    if not folder.exists():
+        return
+    if not folder.is_dir():
+        raise ValueError(f"the output folder {folder} is a file")
+    target: Path = folder.resolve()
+    for kept in (input_dir.resolve(), Path(__file__).resolve().parent):
+        if kept == target or target in kept.parents:
+            raise ValueError(f"the output folder {folder} contains {kept}, so it is not deleted")
+    shutil.rmtree(target)
 
 
 def save_table(folder: Path, file_name: str, header: list[str], rows: list[list[str | int | float]]) -> Path:
@@ -222,7 +328,7 @@ def save_results(inputs: SheetInputs, res: SheetResults, folder: Path = OUTPUT_D
     (OUTPUT_FILES), so the results of both can sit side by side. The curves file has one row per
     maturity 1..Max Maturity with the inputs (DLT, LLFR Weight, Input Rate) and the results
     (Bootstrapped Zero Rate CC, Basic RFR). The parameters file lists the parameters (Coupon
-    Frequency for swaps only), the FSP and the LLFR (CC).
+    Frequency for swaps only), the FSP and the LLFR (CC) in the order of the sheet.
 
     Args:
         inputs: the inputs of the calculation.
@@ -240,14 +346,76 @@ def save_results(inputs: SheetInputs, res: SheetResults, folder: Path = OUTPUT_D
           res["BOOTSTRAPPED_CURVE"][t], res["BASIC_RFR"][t]] for t in range(1, inputs["MAX_MATURITY"] + 1)])
     coupon_frequency: list[list[str | int | float]] = (
         [["Coupon Frequency", inputs["CouponFreq"]]] if inputs["CouponFreq"] is not None else [])
+    # in the order of the sheet: H11:H16, Max Maturity (no cell), L22
     parameters_path: Path = save_table(folder, parameters_file, ["Parameter", "Value"], [
         ["Instrument", inputs["Instrument"]],
         *coupon_frequency,
+        ["FSP", res["FSP"]],
         ["UFR", inputs["UFR"]],
         ["Convergence", inputs["alpha"]],
         ["CRA", inputs["CRA"]],
         ["Max Maturity", inputs["MAX_MATURITY"]],
-        ["FSP", res["FSP"]],
         ["LLFR (CC)", res["LLFR"]],
+    ])
+    return [curves_path, parameters_path]
+
+
+def save_va_results(inputs: SheetInputs, res: SheetResults, va: VAInputs, cssr: CSSRResults,
+                    va_res: VAResults | None, folder: Path = OUTPUT_DIR) -> list[Path]:
+    """Write the results of the VA calculation to the VA result files of the instrument type.
+
+    The files are swaps_va_curves.csv and swaps_va_parameters.csv for swaps, and
+    government_bonds_va_curves.csv and government_bonds_va_parameters.csv for government bonds
+    (VA_OUTPUT_FILES). The curves file has one row per maturity 1..Max Maturity with the Basic RFR,
+    the CSSR Curve and the VA Curve. The parameters file lists the VA inputs and the calculated
+    values in the order of the workbook: the VA parameters of sheet 'Input Data & Extrapolation',
+    then sheet 'CSSR Calculation', then sheet 'VA Term Structures'. Values that are not available,
+    such as the CSSR before the valuation on the CSSR curve and the macro VA when it is not
+    selected, are written as empty cells.
+
+    Args:
+        inputs: the inputs of the basic RFR.
+        res: the basic RFR, from calculation.calculate_sheet.
+        va: the VA inputs.
+        cssr: the results of volatility_adjustment.calculate_cssr_sheet.
+        va_res: the results of volatility_adjustment.calculate_va_sheet; None without a CSSR.
+        folder: target folder; the project's Output folder by default.
+
+    Returns:
+        The paths of the written files: [curves file, parameters file].
+    """
+    def value(x: float | None) -> float:
+        """A value for the parameters file: None becomes nan, which is written as an empty cell."""
+        return math.nan if x is None else x
+
+    curves_file, parameters_file = VA_OUTPUT_FILES[inputs["Instrument"]]
+    curves_path: Path = save_table(
+        folder, curves_file, ["Maturity", "Basic RFR", "CSSR Curve", "VA Curve"],
+        [[t, res["BASIC_RFR"][t], cssr["CSSR_CURVE"][t], va_res["VA_CURVE"][t] if va_res else math.nan]
+         for t in range(1, inputs["MAX_MATURITY"] + 1)])
+    # in the order of the workbook: sheet by sheet, each block top to bottom
+    parameters_path: Path = save_table(folder, parameters_file, ["Parameter", "Value"], [
+        # Input Data & Extrapolation, VA Parameters L10:L12
+        ["Currency RCS", va["RCS_CU"]],
+        ["Country RCS", value(va["RCS_CO"])],
+        ["Debt to Total Assets", value(va["DTTA"])],
+        # CSSR Calculation: H10, L10:L16, K20
+        ["Notional VA", cssr["NOTIONAL_VA"]],
+        ["MV Fixed Income", value(va["MVFI"])],
+        ["MV Fixed Income CSSR Curve", value(va["MVFI_NOTIONAL"])],
+        ["PVBP MV Fixed Income", value(cssr["PVBP_MVFI"])],
+        ["BEL", value(va["BEL"])],
+        ["BEL CSSR Curve", value(va["BEL_NOTIONAL"])],
+        ["PVBP BEL", value(cssr["PVBP_BEL"])],
+        ["CSSR", value(cssr["CSSR"])],
+        ["Notional VA LLFR (CC)", cssr["NOTIONAL_VA_LLFR"]],
+        # VA Term Structures: H10:H12 (USA? and USA in one row), L10:L13, K20
+        ["Use Macro VA", int(va["MACROVA_SELECTED"])],
+        ["USA", value(va["USA"])],
+        ["Currency VA", va_res["CURRENCY_VA"] if va_res else math.nan],
+        ["Country Adjustment Factor", va_res["W_CO"] if va_res else math.nan],
+        ["Macro VA", va_res["MACRO_VA"] if va_res else math.nan],
+        ["Total VA", va_res["TOTAL_VA"] if va_res else math.nan],
+        ["Total VA LLFR (CC)", va_res["TOTAL_VA_LLFR"] if va_res else math.nan],
     ])
     return [curves_path, parameters_path]

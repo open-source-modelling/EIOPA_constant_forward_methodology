@@ -9,7 +9,9 @@ import unittest
 
 from calculation import SheetInputs
 from tests.test_calculation import example_inputs
-from validation import validate_inputs
+from tests.test_volatility_adjustment import example_va_inputs
+from validation import validate_inputs, validate_va_inputs
+from volatility_adjustment import VAInputs
 
 
 class TestValidateInputs(unittest.TestCase):
@@ -143,6 +145,77 @@ class TestValidateInputs(unittest.TestCase):
         inputs["UFR"] = 3.3
         inputs["LLFRweightsIn"][20] = 0.5
         self.assertInvalid(inputs, "Coupon Frequency", "UFR", "sum to 1")
+
+
+
+class TestValidateVAInputs(unittest.TestCase):
+
+    def assertInvalid(self, va: VAInputs, *messages: str) -> None:
+        """validate_va_inputs raises ValueError and the message contains every given text."""
+        with self.assertRaises(ValueError) as context:
+            validate_va_inputs(va)
+        for message in messages:
+            self.assertIn(message, str(context.exception))
+
+    def test_workbook_example_is_valid(self) -> None:
+        validate_va_inputs(example_va_inputs())
+
+    def test_without_the_values_for_the_cssr_is_valid(self) -> None:
+        va = example_va_inputs()
+        va.update(MVFI=None, MVFI_NOTIONAL=None, BEL=None, BEL_NOTIONAL=None)
+        validate_va_inputs(va)
+
+    def test_only_currency_rcs_is_valid(self) -> None:
+        validate_va_inputs(VAInputs(RCS_CU=0.01, RCS_CO=None, DTTA=None, MVFI=None, MVFI_NOTIONAL=None, BEL=None,
+                                    BEL_NOTIONAL=None, MACROVA_SELECTED=False, USA=None))
+
+    def test_negative_rcs_is_valid(self) -> None:
+        va = example_va_inputs()
+        va["RCS_CU"] = -0.002
+        validate_va_inputs(va)
+
+    def test_rcs_in_basis_points(self) -> None:
+        va = example_va_inputs()
+        va.update(RCS_CU=100, RCS_CO=140)
+        self.assertInvalid(va, "Currency RCS must be a decimal", "Country RCS must be a decimal")
+
+    def test_some_values_for_the_cssr_missing(self) -> None:
+        va = example_va_inputs()
+        va.update(MVFI_NOTIONAL=None, BEL_NOTIONAL=None)
+        self.assertInvalid(va, "all together or not at all", "MV Fixed Income CSSR Curve, BEL CSSR Curve")
+
+    def test_notional_va_of_zero(self) -> None:
+        # 85% of 0.5 bp rounds to 0 bp
+        va = example_va_inputs()
+        va["RCS_CU"] = 0.00005
+        self.assertInvalid(va, "the notional VA", "is 0")
+
+    def test_notional_va_of_zero_is_valid_without_the_values(self) -> None:
+        va = example_va_inputs()
+        va.update(RCS_CU=0.00005, MVFI=None, MVFI_NOTIONAL=None, BEL=None, BEL_NOTIONAL=None)
+        validate_va_inputs(va)
+
+    def test_macro_va_needs_the_country_values(self) -> None:
+        va = example_va_inputs()
+        va.update(USA=None, MACROVA_SELECTED=True, RCS_CO=None, DTTA=None)
+        self.assertInvalid(va, "needs the Country RCS", "needs the Debt to Total Assets ratio")
+
+    def test_debt_to_total_assets_in_percent(self) -> None:
+        va = example_va_inputs()
+        va.update(USA=None, MACROVA_SELECTED=True, DTTA=50)
+        self.assertInvalid(va, "Debt to Total Assets must be between 0 and 1")
+
+    def test_macro_va_and_usa_together(self) -> None:
+        va = example_va_inputs()
+        va["MACROVA_SELECTED"] = True
+        self.assertInvalid(va, "the USA and the macro VA cannot be used together")
+
+    def test_usa_above_105_percent(self) -> None:
+        va = example_va_inputs()
+        va["USA"] = 1.06
+        self.assertInvalid(va, "the USA must be at most 105%")
+        va["USA"] = 1.05
+        validate_va_inputs(va)
 
 
 if __name__ == "__main__":

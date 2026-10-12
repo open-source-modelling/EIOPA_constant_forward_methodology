@@ -14,9 +14,12 @@ from pathlib import Path
 
 import data_io
 from calculation import SheetInputs, SheetResults, calculate_sheet
-from data_io import (CURVE_FILE, OUTPUT_FILES, PARAMETERS_FILE, csv_value, parse_number, read_csv, read_inputs,
-                     save_results, save_table)
+from data_io import (CURVE_FILE, OUTPUT_FILES, PARAMETERS_FILE, VA_OUTPUT_FILES, VA_PARAMETERS_FILE, clear_output_folder,
+                     csv_value, parse_number, read_csv, read_inputs, read_va_inputs, save_results, save_table,
+                     save_va_results)
 from tests.test_calculation import example_inputs
+from tests.test_volatility_adjustment import example_va_inputs
+from volatility_adjustment import CSSRResults, VAResults, calculate_cssr_sheet, calculate_va_sheet
 
 PARAMETERS_TEXT: str = ("Parameter,Value\nInstrument,SWP\nCoupon Frequency,1\nUFR,0.033\nConvergence,0.11\nCRA,10\n"
                         "Max Maturity,150\n")
@@ -27,6 +30,9 @@ CURVE_TEXT: str = ("Maturity,DLT,LLFR Weight,Input Rate\n"
                    "3,0,0,0.0235\n"
                    "4,0,0,\n"
                    "5,1,1,0.02569\n")
+VA_PARAMETERS_TEXT: str = ("Parameter,Value\nCurrency RCS,0.01\nCountry RCS,0.014\nDebt to Total Assets,0.5\n"
+                           "Use Macro VA,0\nUSA,0.8\nMV Fixed Income,500000\nMV Fixed Income CSSR Curve,490000\n"
+                           "BEL,870000\nBEL CSSR Curve,850000\n")
 
 
 class TempFolderTestCase(unittest.TestCase):
@@ -253,6 +259,42 @@ class TestCsvValue(unittest.TestCase):
         self.assertEqual([csv_value(x) for x in (0.1, 0, 7, "SWP", "")], [0.1, 0, 7, "SWP", ""])
 
 
+class TestClearOutputFolder(TempFolderTestCase):
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.input_dir: Path = self.folder / "Input"
+        self.output_dir: Path = self.folder / "Output"
+        self.input_dir.mkdir()
+
+    def test_deletes_the_folder_and_its_content(self) -> None:
+        (self.output_dir / "sub").mkdir(parents=True)
+        (self.output_dir / "sub" / "old.csv").write_text("x", encoding="utf-8")
+        clear_output_folder(self.output_dir, self.input_dir)
+        self.assertFalse(self.output_dir.exists())
+
+    def test_missing_folder_is_fine(self) -> None:
+        clear_output_folder(self.output_dir, self.input_dir)
+        self.assertFalse(self.output_dir.exists())
+
+    def test_folder_containing_the_input_folder_is_kept(self) -> None:
+        for folder in (self.folder, self.input_dir):
+            with self.assertRaisesRegex(ValueError, "so it is not deleted"):
+                clear_output_folder(folder, self.input_dir)
+        self.assertTrue(self.input_dir.exists())
+
+    def test_folder_containing_the_code_is_kept(self) -> None:
+        with self.assertRaisesRegex(ValueError, "so it is not deleted"):
+            clear_output_folder(data_io.PROJECT_DIR, self.input_dir)
+        self.assertTrue(Path(data_io.__file__).exists())
+
+    def test_a_file_is_not_deleted(self) -> None:
+        path = self.write("Output", "not a folder")
+        with self.assertRaisesRegex(ValueError, "is a file"):
+            clear_output_folder(path, self.input_dir)
+        self.assertTrue(path.exists())
+
+
 class TestSaveTable(TempFolderTestCase):
 
     def test_creates_the_folder_and_returns_the_path(self) -> None:
@@ -315,6 +357,12 @@ class TestSaveResults(TempFolderTestCase):
         self.assertEqual((values["Coupon Frequency"], values["UFR"], values["Convergence"], values["CRA"],
                           values["Max Maturity"]), ("1", "0.033", "0.11", "10", "150"))
 
+    def test_parameters_are_in_the_order_of_the_sheet(self) -> None:
+        # H11:H16, Max Maturity (no cell on the sheet), L22
+        self.assertEqual([row["Parameter"] for row in read_csv(self.paths[1])],
+                         ["Instrument", "Coupon Frequency", "FSP", "UFR", "Convergence", "CRA", "Max Maturity",
+                          "LLFR (CC)"])
+
     def test_rows_follow_max_maturity(self) -> None:
         inputs: SheetInputs = example_inputs()
         inputs["MAX_MATURITY"] = 60
@@ -336,7 +384,7 @@ class TestSaveResultsGovernmentBonds(TempFolderTestCase):
 
     def test_parameters_file_has_no_coupon_frequency(self) -> None:
         values = {row["Parameter"]: row["Value"] for row in read_csv(self.paths[1])}
-        self.assertEqual(list(values), ["Instrument", "UFR", "Convergence", "CRA", "Max Maturity", "FSP", "LLFR (CC)"])
+        self.assertEqual(list(values), ["Instrument", "FSP", "UFR", "Convergence", "CRA", "Max Maturity", "LLFR (CC)"])
         self.assertEqual(values["Instrument"], "GVT")
         self.assertEqual(float(values["LLFR (CC)"]), self.res["LLFR"])
 
@@ -349,6 +397,111 @@ class TestSaveResultsGovernmentBonds(TempFolderTestCase):
         save_results(example_inputs("SWP"), calculate_sheet(**example_inputs("SWP")), self.folder)
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()),
                          sorted([*OUTPUT_FILES["SWP"], *OUTPUT_FILES["GVT"]]))
+
+
+
+class TestReadVAInputs(TempFolderTestCase):
+
+    def test_no_file_means_no_va(self) -> None:
+        self.assertIsNone(read_va_inputs(self.folder))
+
+    def test_reads_the_workbook_example(self) -> None:
+        self.write(VA_PARAMETERS_FILE, VA_PARAMETERS_TEXT)
+        self.assertEqual(read_va_inputs(self.folder), example_va_inputs())
+
+    def test_empty_values_are_none(self) -> None:
+        self.write(VA_PARAMETERS_FILE, "Parameter,Value\nCurrency RCS,0.01\nUSA,\nMV Fixed Income,\nBEL CSSR Curve,\n")
+        va = read_va_inputs(self.folder)
+        assert va is not None
+        self.assertEqual(va["RCS_CU"], 0.01)
+        self.assertEqual((va["RCS_CO"], va["DTTA"], va["USA"], va["MVFI"], va["MVFI_NOTIONAL"], va["BEL"],
+                          va["BEL_NOTIONAL"]), (None,) * 7)
+        self.assertFalse(va["MACROVA_SELECTED"])
+
+    def test_excel_style_file(self) -> None:
+        self.write(VA_PARAMETERS_FILE, "Parameter;Value\nCurrency RCS;0,01\nUse Macro VA;1\nDebt to Total Assets;0,5\n")
+        va = read_va_inputs(self.folder)
+        assert va is not None
+        self.assertEqual((va["RCS_CU"], va["DTTA"], va["MACROVA_SELECTED"]), (0.01, 0.5, True))
+
+    def test_currency_rcs_is_required(self) -> None:
+        self.write(VA_PARAMETERS_FILE, "Parameter,Value\nCurrency RCS,\nUSA,0.8\n")
+        with self.assertRaisesRegex(ValueError, "missing parameter Currency RCS"):
+            read_va_inputs(self.folder)
+
+    def test_macro_va_switch_must_be_zero_or_one(self) -> None:
+        self.write(VA_PARAMETERS_FILE, "Parameter,Value\nCurrency RCS,0.01\nUse Macro VA,2\n")
+        with self.assertRaisesRegex(ValueError, "Use Macro VA: must be 0 or 1"):
+            read_va_inputs(self.folder)
+
+    def test_text_in_a_number(self) -> None:
+        self.write(VA_PARAMETERS_FILE, "Parameter,Value\nCurrency RCS,0.01\nBEL,abc\n")
+        with self.assertRaisesRegex(ValueError, "va_parameters.csv BEL: 'abc' is not a number"):
+            read_va_inputs(self.folder)
+
+
+class TestSaveVAResults(TempFolderTestCase):
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.inputs: SheetInputs = example_inputs()
+        self.res: SheetResults = calculate_sheet(**self.inputs)
+        self.cssr: CSSRResults = calculate_cssr_sheet(self.inputs, self.res, example_va_inputs())
+        self.va_res: VAResults = calculate_va_sheet(self.inputs, self.res, example_va_inputs(), 0.5)
+        self.paths: list[Path] = save_va_results(self.inputs, self.res, example_va_inputs(), self.cssr, self.va_res,
+                                                 self.folder)
+
+    def test_writes_both_files(self) -> None:
+        self.assertEqual(self.paths, [self.folder / name for name in VA_OUTPUT_FILES["SWP"]])
+
+    def test_curves_file(self) -> None:
+        rows = read_csv(self.paths[0])
+        self.assertEqual(list(rows[0]), ["Maturity", "Basic RFR", "CSSR Curve", "VA Curve"])
+        self.assertEqual([int(row["Maturity"]) for row in rows], list(range(1, 151)))
+        for row in rows:
+            t = int(row["Maturity"])
+            self.assertEqual((float(row["Basic RFR"]), float(row["CSSR Curve"]), float(row["VA Curve"])),
+                             (self.res["BASIC_RFR"][t], self.cssr["CSSR_CURVE"][t], self.va_res["VA_CURVE"][t]))
+
+    def test_parameters_file(self) -> None:
+        values = {row["Parameter"]: row["Value"] for row in read_csv(self.paths[1])}
+        self.assertEqual((values["Currency RCS"], values["Use Macro VA"], values["USA"], values["BEL CSSR Curve"]),
+                         ("0.01", "0", "0.8", "850000.0"))
+        self.assertEqual((float(values["Notional VA"]), float(values["CSSR"]), float(values["Total VA"])),
+                         (0.0085, 0.5, 0.0034))
+        self.assertEqual(float(values["Total VA LLFR (CC)"]), self.va_res["TOTAL_VA_LLFR"])
+        self.assertEqual(values["Macro VA"], "")                     # not selected: #N/A
+
+    def test_parameters_are_in_the_order_of_the_workbook(self) -> None:
+        self.assertEqual([row["Parameter"] for row in read_csv(self.paths[1])], [
+            "Currency RCS", "Country RCS", "Debt to Total Assets",                          # Input Data L10:L12
+            "Notional VA", "MV Fixed Income", "MV Fixed Income CSSR Curve", "PVBP MV Fixed Income",
+            "BEL", "BEL CSSR Curve", "PVBP BEL", "CSSR", "Notional VA LLFR (CC)",            # CSSR H10, L10:L16, K20
+            "Use Macro VA", "USA", "Currency VA", "Country Adjustment Factor", "Macro VA",
+            "Total VA", "Total VA LLFR (CC)",                                                # VA H10:H12, L10:L13, K20
+        ])
+
+    def test_parameters_file_can_be_read_back_as_inputs(self) -> None:
+        (self.folder / VA_PARAMETERS_FILE).write_text(self.paths[1].read_text(encoding="utf-8"), encoding="utf-8")
+        self.assertEqual(read_va_inputs(self.folder), example_va_inputs())
+
+    def test_without_cssr_the_va_cells_are_empty(self) -> None:
+        va = example_va_inputs()
+        va.update(MVFI=None, MVFI_NOTIONAL=None, BEL=None, BEL_NOTIONAL=None)
+        cssr = calculate_cssr_sheet(self.inputs, self.res, va)
+        paths = save_va_results(self.inputs, self.res, va, cssr, None, self.folder)
+        rows = read_csv(paths[0])
+        self.assertTrue(all(row["VA Curve"] == "" and row["CSSR Curve"] != "" for row in rows))
+        values = {row["Parameter"]: row["Value"] for row in read_csv(paths[1])}
+        self.assertEqual((values["MV Fixed Income"], values["CSSR"], values["Total VA"]), ("", "", ""))
+        self.assertEqual(float(values["Notional VA"]), 0.0085)
+
+    def test_files_are_named_after_the_instrument(self) -> None:
+        inputs = example_inputs("GVT")
+        res = calculate_sheet(**inputs)
+        paths = save_va_results(inputs, res, example_va_inputs(), calculate_cssr_sheet(inputs, res, example_va_inputs()),
+                                None, self.folder)
+        self.assertEqual(paths, [self.folder / name for name in VA_OUTPUT_FILES["GVT"]])
 
 
 if __name__ == "__main__":
