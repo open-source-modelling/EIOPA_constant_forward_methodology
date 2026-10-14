@@ -1,8 +1,8 @@
 Parameter,Value
 Instrument,GVT
-FSP,30
+FSP,20
 UFR,0.033
 Convergence,0.11
 CRA,0.0
 Max Maturity,150
-LLFR (CC),0.041044001742317704
+LLFR (CC),0.033909735547772456
