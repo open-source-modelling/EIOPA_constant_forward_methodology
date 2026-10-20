@@ -21,9 +21,12 @@ from pathlib import Path
 
 import main
 from calculation import SheetInputs, SheetResults, calculate_sheet
-from data_io import CURVE_COLUMNS, CURVE_FILE, OUTPUT_FILES, PARAMETERS_FILE, VA_OUTPUT_FILES, VA_PARAMETERS_FILE, save_table
-from main import print_summary, print_va_summary, run, run_basic_rfr, run_va
+from data_io import (CURVE_COLUMNS, CURVE_FILE, IRR_COLUMNS, IRR_OUTPUT_FILES, IRR_PARAMETERS_FILE, OUTPUT_FILES,
+                     PARAMETERS_FILE, VA_OUTPUT_FILES, VA_PARAMETERS_FILE, save_table)
+from interest_rate_risk import SHEET_COLUMNS, IRRInputs, calculate_irr_down_sheet, calculate_irr_up_sheet
+from main import print_irr_summary, print_summary, print_va_summary, run, run_basic_rfr, run_irr, run_va
 from tests.test_calculation import example_inputs
+from tests.test_interest_rate_risk import EXAMPLE_VA, example_irr_inputs
 from tests.test_volatility_adjustment import example_va_inputs
 from volatility_adjustment import VAInputs, calculate_cssr_sheet, calculate_va_sheet
 
@@ -53,6 +56,13 @@ def write_va_inputs(folder: Path, va: VAInputs) -> None:
         ["MV Fixed Income CSSR Curve", cell(va["MVFI_NOTIONAL"])], ["BEL", cell(va["BEL"])],
         ["BEL CSSR Curve", cell(va["BEL_NOTIONAL"])],
     ])
+
+
+def write_irr_inputs(folder: Path, irr: IRRInputs) -> None:
+    """Write ``irr`` as irr_parameters.csv to ``folder``, one row per maturity 1..150; missing values as empty cells."""
+    columns = [irr[field] for field in SHEET_COLUMNS]  # type: ignore[literal-required]
+    save_table(folder, IRR_PARAMETERS_FILE, IRR_COLUMNS,
+               [[t, *(values.get(t, math.nan) for values in columns)] for t in range(1, 151)])
 
 
 def printed(function: object, *args: object) -> tuple[object, str]:
@@ -173,6 +183,44 @@ class TestPrintVASummary(unittest.TestCase):
         self.assertEqual(maturities, [1, 2, 5, 10, 15, 20, 21, 25, 30, 40, 50, 55])
 
 
+class TestPrintIRRSummary(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.inputs = example_inputs("GVT")
+        self.res: SheetResults = calculate_sheet(**self.inputs)
+
+    def test_with_va(self) -> None:
+        up = calculate_irr_up_sheet(self.inputs, self.res, example_irr_inputs(), EXAMPLE_VA)
+        down = calculate_irr_down_sheet(self.inputs, self.res, example_irr_inputs(), EXAMPLE_VA)
+        _, output = printed(print_irr_summary, self.res, up, down)
+        lines = output.splitlines()
+        self.assertEqual(lines[:7], ["UFR up      : 3.45%", "UFR down    : 3.15%",
+                                     "LLFR up     : 4.00808333% (continuously compounded)",
+                                     "LLFR down   : 0.99936036% (continuously compounded)",
+                                     "VA          : 34 bp",
+                                     "LLFR* up    : 4.12009302% (with VA, continuously compounded)",
+                                     "LLFR* down  : 1.11137005% (with VA, continuously compounded)"])
+        self.assertIn("       1     2.076%   5.482%   5.841%  -0.288%    0.051%", lines)
+        self.assertIn("     150     3.274%   3.667%   3.721%   2.739%    2.792%", lines)
+
+    def test_without_va(self) -> None:
+        up = calculate_irr_up_sheet(self.inputs, self.res, example_irr_inputs())
+        down = calculate_irr_down_sheet(self.inputs, self.res, example_irr_inputs())
+        _, output = printed(print_irr_summary, self.res, up, down)
+        self.assertIn("VA          : not available, so the curves with VA are not calculated", output)
+        self.assertNotIn("LLFR*", output)
+        self.assertIn("       1     2.076%   5.482%     #N/A  -0.288%      #N/A", output.splitlines())
+
+    def test_shorter_curve_ends_at_its_max_maturity(self) -> None:
+        inputs = example_inputs("GVT")
+        inputs["MAX_MATURITY"] = 55
+        res = calculate_sheet(**inputs)
+        _, output = printed(print_irr_summary, res, calculate_irr_up_sheet(inputs, res, example_irr_inputs()),
+                            calculate_irr_down_sheet(inputs, res, example_irr_inputs()))
+        maturities = [int(line.split()[0]) for line in output.splitlines() if line.split()[0].isdigit()]
+        self.assertEqual(maturities, [1, 2, 5, 10, 15, 20, 21, 25, 30, 40, 50, 55])
+
+
 class TestRun(unittest.TestCase):
 
     def setUp(self) -> None:
@@ -262,6 +310,48 @@ class TestRun(unittest.TestCase):
         self.assertNotIn("Notional VA", buffer.getvalue())
         self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()), sorted(OUTPUT_FILES["SWP"]))
 
+    def test_irr_with_va(self) -> None:
+        write_va_inputs(self.input_dir, example_va_inputs())
+        write_irr_inputs(self.input_dir, example_irr_inputs())
+        _, output = printed(run, self.input_dir, self.output_dir)
+        self.assertIn("\nUFR up      : 3.45%\n", output)
+        self.assertIn("VA          : 34 bp", output)
+        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()),
+                         sorted([*OUTPUT_FILES["SWP"], *VA_OUTPUT_FILES["SWP"], *IRR_OUTPUT_FILES["SWP"]]))
+        for name in IRR_OUTPUT_FILES["SWP"]:
+            self.assertIn(f"Saved {self.output_dir / name}\n", output)
+
+    def test_irr_without_va_parameters(self) -> None:
+        write_irr_inputs(self.input_dir, example_irr_inputs())
+        _, output = printed(run, self.input_dir, self.output_dir)
+        self.assertIn("VA          : not available", output)
+        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()),
+                         sorted([*OUTPUT_FILES["SWP"], *IRR_OUTPUT_FILES["SWP"]]))
+
+    def test_irr_without_the_values_on_the_cssr_curve(self) -> None:
+        # va_parameters.csv without the values for the CSSR gives no total VA, so no shocked curves with VA
+        va = example_va_inputs()
+        va.update(MVFI=None, MVFI_NOTIONAL=None, BEL=None, BEL_NOTIONAL=None)
+        write_va_inputs(self.input_dir, va)
+        write_irr_inputs(self.input_dir, example_irr_inputs())
+        _, output = printed(run, self.input_dir, self.output_dir)
+        self.assertIn("CSSR        : not calculated", output)
+        self.assertIn("VA          : not available", output)
+        self.assertTrue((self.output_dir / IRR_OUTPUT_FILES["SWP"][0]).exists())
+
+    def test_invalid_irr_inputs_stop_after_the_va(self) -> None:
+        write_va_inputs(self.input_dir, example_va_inputs())
+        irr = example_irr_inputs()
+        irr["IRR_SM_UP"][1] = 61
+        write_irr_inputs(self.input_dir, irr)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), self.assertRaisesRegex(ValueError, "smup must be a decimal"):
+            run(self.input_dir, self.output_dir)
+        self.assertIn("Total VA    : 34 bp", buffer.getvalue())
+        self.assertNotIn("UFR up", buffer.getvalue())
+        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()),
+                         sorted([*OUTPUT_FILES["SWP"], *VA_OUTPUT_FILES["SWP"]]))
+
     def test_results_of_an_earlier_run_are_deleted(self) -> None:
         write_va_inputs(self.input_dir, example_va_inputs())
         printed(run, self.input_dir, self.output_dir)
@@ -291,6 +381,7 @@ class TestRun(unittest.TestCase):
         self.assertEqual(run.__defaults__, project_folders)
         self.assertEqual(run_basic_rfr.__defaults__, project_folders)
         self.assertEqual(run_va.__defaults__, project_folders)
+        self.assertEqual(run_irr.__defaults__, (None, *project_folders))
 
 
 class TestRunSteps(unittest.TestCase):
@@ -326,6 +417,23 @@ class TestRunSteps(unittest.TestCase):
         inputs = example_inputs()
         with self.assertRaisesRegex(FileNotFoundError, "va_parameters.csv"):
             run_va(inputs, calculate_sheet(**inputs), self.input_dir, self.output_dir)
+
+    def test_irr_builds_on_the_basic_rfr_and_the_va(self) -> None:
+        write_irr_inputs(self.input_dir, example_irr_inputs())
+        inputs = example_inputs()
+        res = calculate_sheet(**inputs)
+        (up, down), output = printed(run_irr, inputs, res, EXAMPLE_VA, self.input_dir,  # type: ignore[misc]
+                                     self.output_dir)
+        self.assertEqual((up["IRR_RFR"], down["IRR_VA_CURVE"]),
+                         (calculate_irr_up_sheet(inputs, res, example_irr_inputs(), EXAMPLE_VA)["IRR_RFR"],
+                          calculate_irr_down_sheet(inputs, res, example_irr_inputs(), EXAMPLE_VA)["IRR_VA_CURVE"]))
+        self.assertTrue(output.startswith("UFR up      : 3.45%\n"))
+        self.assertEqual(sorted(p.name for p in self.output_dir.iterdir()), sorted(IRR_OUTPUT_FILES["SWP"]))
+
+    def test_irr_without_irr_parameters(self) -> None:
+        inputs = example_inputs()
+        with self.assertRaisesRegex(FileNotFoundError, "irr_parameters.csv"):
+            run_irr(inputs, calculate_sheet(**inputs), None, self.input_dir, self.output_dir)
 
 
 class TestCommandLine(unittest.TestCase):
@@ -371,6 +479,16 @@ class TestCommandLine(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
         self.assertIn("Total VA    : 34 bp", process.stdout)
         for name in VA_OUTPUT_FILES["SWP"]:
+            self.assertTrue((self.project / "Output" / name).exists())
+
+    def test_success_with_irr(self) -> None:
+        write_inputs(self.project / "Input", example_inputs("GVT"))
+        write_va_inputs(self.project / "Input", example_va_inputs())
+        write_irr_inputs(self.project / "Input", example_irr_inputs())
+        process = self.run_main()
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("LLFR* up    : 4.12009302% (with VA, continuously compounded)", process.stdout)
+        for name in IRR_OUTPUT_FILES["GVT"]:
             self.assertTrue((self.project / "Output" / name).exists())
 
     def test_invalid_va_inputs_give_an_input_error(self) -> None:

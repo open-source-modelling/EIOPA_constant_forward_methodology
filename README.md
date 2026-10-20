@@ -5,7 +5,8 @@ risk-free interest rate term structure from swap rates or government bond zero r
 constant-forward bootstrapping up to the first smoothing point, followed by extrapolation of
 forward rates from the last liquid forward rate (LLFR) to the ultimate forward rate (UFR). It also
 calculates the undertaking-specific volatility adjustment (VA): the credit spread sensitivity ratio
-(CSSR), the VA and the term structure with VA.
+(CSSR), the VA and the term structure with VA; and the term structures after the upward and
+downward interest rate shocks, without and with VA.
 
 It is written for actuaries who want to
 
@@ -15,8 +16,8 @@ It is written for actuaries who want to
   standard library and can be copied into another project as it is.
 
 The basic risk-free rate is a line-by-line port of the VBA in EIOPA's demonstration workbook, and
-the VA a port of the workbook's worksheet formulas, for which there is no VBA. Both reproduce the
-workbook exactly (see [Verification](#verification)).
+the VA and the interest rate shocks are ports of the workbook's worksheet formulas, for which there
+is no VBA. All three reproduce the workbook exactly (see [Verification](#verification)).
 
 > **Disclaimer.** This is not an EIOPA product and is not endorsed by EIOPA. It is provided for
 > educational purposes, without warranty. EIOPA publishes the official risk-free rate term
@@ -31,7 +32,8 @@ workbook exactly (see [Verification](#verification)).
 - [Quick start](#quick-start)
 - [Inputs and outputs](#inputs-and-outputs): files and columns
 - [Using the algorithm in your own code](#using-the-algorithm-in-your-own-code): inputs and outputs of
-  [`calculate_sheet`](#inputs-of-calculate_sheet), [the volatility adjustment](#the-volatility-adjustment)
+  [`calculate_sheet`](#inputs-of-calculate_sheet), [the volatility adjustment](#the-volatility-adjustment),
+  [the interest rate shocks](#the-interest-rate-shocks)
 - [Verification](#verification)
 - [Differences from the EIOPA workbook and documentation](#differences-from-the-eiopa-workbook-and-documentation)
 - [Scope and limitations](#scope-and-limitations)
@@ -72,6 +74,11 @@ no longer publishes a VA for each currency, only the risk-corrected spreads it i
 undertaking that applies the VA calculates its own credit spread sensitivity ratio (CSSR) from its
 fixed income assets and best estimate liabilities, and from that its own VA and term structure with
 VA (see [step 5 of the method](#5-volatility-adjustment-93-94-10)).
+
+EIOPA's workbook also derives the term structures for the interest rate risk sub-module of the
+standard formula with the new method: the bootstrapped rates are shocked up and down, and the
+shocked curves are extrapolated from their own LLFR (see
+[step 6 of the method](#6-interest-rate-risk-shocks-sheets-irr-up-shock-and-irr-down-shock)).
 
 ---
 
@@ -176,6 +183,40 @@ $$\text{VA}_{co,macro} = 85\% \cdot \text{CSSR} \cdot \max(\text{RCS}_{co} - 1.3
 The total VA is rounded to whole basis points (§10.1.3) and gives the term structure with VA. It can
 be negative (§9.3.6).
 
+### 6. Interest rate risk shocks (sheets IRR Up Shock and IRR Down Shock)
+
+The technical documentation does not describe the shocks; this step follows the workbook's
+worksheet formulas. For each maturity the sheet *Parameters* gives a relative shock $s$ and an
+absolute shock $b$, upward and downward, and a floor $r^{floor}$ for the downward shock.
+
+**Shocked rates.** The shocks apply to the bootstrapped zero rates $r_t$ after the CRA, annually
+compounded, for every maturity up to the last DLT maturity:
+
+$$r^{up}_t = r_t \cdot (1 + s^{up}_t) + b^{up}_t, \qquad r^{down}_t = r_t \cdot (1 - s^{down}_t) - b^{down}_t .$$
+
+Annual compounding matters: the formula gives a different result on continuously compounded rates,
+because $\ln(1 + r(1+s) + b) \ne (1+s)\ln(1+r) + b$. At 1 year in the workbook's example the upward
+shock gives 5.482%; applied to the continuously compounded rate it would give 5.599%. There is no
+special case for low or negative rates.
+
+**Extrapolation.** The shocked rates are converted to continuous compounding,
+$z^{c,up}_t = \ln(1 + r^{up}_t)$, and treated like the bootstrapped curve in steps 3 and 4: the LLFR
+is calculated from them with the same DLT maturities and weights, and the curve is extrapolated from
+that LLFR with the UFR shifted by 15 basis points, $\text{UFR} + 0.15\%$ upwards and
+$\text{UFR} - 0.15\%$ downwards. Up to the FSP the curve is the shocked rates; between the FSP and
+the last DLT maturity the shocked rates enter only the LLFR. The results are rounded to 5 decimals.
+
+**Floor.** After the downward shock, each rounded rate is raised to at least the floor of its
+maturity: $\max(z^{down}_t, r^{floor}_t)$. The floor is applied last, so it does not change the LLFR.
+In the workbook's table it is −1.25% up to 7 years, rises linearly to −0.893% at 20 years and stays
+there. The upward shock has no floor.
+
+**With VA.** As in step 5, but starting from the shocked rates: the VA is added to the one-year
+forwards of $z^{c,up}$ (or $z^{c,down}$) and the LLFR becomes
+$LLFR^{up,c} + w_{t_F} \cdot \ln(1 + VA)$. The VA is the undertaking's total VA, not recalculated
+for the shock. Unlike on the sheet *VA Term Structures*, the forwards come from the unrounded
+shocked rates. The floor applies to the downward curve with VA as well.
+
 ---
 
 ## Quick start
@@ -187,13 +228,16 @@ python Code/main.py
 ```
 
 This first deletes the folder `Output/`, so that it only ever holds the results of the latest run.
-It then runs two steps:
+It then runs three steps:
 
 1. **Basic risk-free rate** (`run_basic_rfr` in `Code/main.py`): reads `curve.csv` and
    `parameters.csv` from `Input/`, validates them, calculates the curves, prints a summary and
    writes the results to `Output/`.
 2. **Volatility adjustment** (`run_va`), only if `Input/` contains `va_parameters.csv`: reads and
    validates it, and calculates, prints and writes the VA on top of the basic risk-free rate.
+3. **Interest rate shocks** (`run_irr`), only if `Input/` contains `irr_parameters.csv`: reads and
+   validates it, and calculates, prints and writes the curves after the upward and downward
+   shocks. With a total VA from the second step, also the shocked curves with VA.
 
 The first step prints:
 
@@ -237,7 +281,28 @@ Calculating your own VA takes two runs, because the CSSR depends on a valuation 
    enter the four values in `va_parameters.csv` and run again. The run now calculates the CSSR,
    the VA and the curve with VA.
 
-Without `va_parameters.csv` only the first step runs.
+Without `va_parameters.csv` the second step does not run.
+
+For the third step, copy `Examples/EIOPA_Example/Input/irr_parameters.csv`, the shock parameters
+of the workbook's sheet *Parameters*, into `Input/`. With the VA of 34 bp above it prints:
+
+```text
+UFR up      : 3.45%
+UFR down    : 3.15%
+LLFR up     : 4.04702331% (continuously compounded)
+LLFR down   : 1.01223960% (continuously compounded)
+VA          : 34 bp
+LLFR* up    : 4.15903300% (with VA, continuously compounded)
+LLFR* down  : 1.12424929% (with VA, continuously compounded)
+Maturity  Basic RFR       Up  Up + VA     Down Down + VA
+       1     2.076%   5.482%   5.841%  -0.288%    0.051%
+      ...
+      20     3.209%   4.891%   5.248%   1.105%    1.448%
+     150     3.287%   3.682%   3.736%   2.745%    2.798%
+```
+
+Without a total VA (no `va_parameters.csv`, or the CSSR not yet calculated) it prints
+`VA : not available` and calculates the shocked curves without VA only.
 
 To calculate the curve from government bonds instead, set `Instrument` to `GVT` in
 `Input/parameters.csv` and put the bond zero rates in `Input/curve.csv`. The run then prints
@@ -255,13 +320,16 @@ Input error: invalid inputs:
 Each step checks its own inputs. Invalid inputs for the basic risk-free rate stop the run before
 anything is written; `Output/` has already been deleted and is not created again. Invalid VA inputs (`Input error: invalid VA
 inputs: ...`) stop it after the first step: the basic risk-free rate is saved, the VA is not.
+Invalid shock parameters (`Input error: invalid interest rate shock inputs: ...`) stop it after
+the second step.
 
 ---
 
 ## Inputs and outputs
 
 `python Code/main.py` reads two files from `Input/` and writes two files to `Output/`; with the
-optional `va_parameters.csv` it writes two more for the VA. `Output/` is deleted at the start of
+optional `va_parameters.csv` it writes two more for the VA, and with the optional
+`irr_parameters.csv` two more for the interest rate shocks. `Output/` is deleted at the start of
 every run, so copy results you want to keep elsewhere. The instrument in `parameters.csv`
 decides how the rates in `curve.csv` are read and how the result files are named.
 
@@ -328,12 +396,29 @@ counts as missing.
 The four values for the CSSR are given all together or not at all. The USA and the macro VA cannot
 be used together.
 
-All three files may use `,` or `;` as separator and `.` or `,` as decimal mark, so files saved by
+### Input file `Input/irr_parameters.csv` (optional)
+
+The shock parameters of the sheet *Parameters* (G16:L166), one row per maturity. The rows must
+cover every maturity 1 to `Max Maturity`; rows beyond it are not used, so the table of 150 years
+also serves shorter curves. `Examples/EIOPA_Example/Input/irr_parameters.csv` holds the workbook's
+table, including the values the workbook interpolates (relative shocks from 50 to 90 years,
+absolute shocks from 50 to 60 years, the floor from 7 to 20 years), at full precision.
+
+| Column | Meaning | Format | Sheet column | Example (1 year) |
+|---|---|---|---|---|
+| `Maturity` | Maturity | Whole number of years ≥ 1 | G | `1` |
+| `smup` | Relative upward shock $s^{up}$ | Decimal, 0 to 1 | H | `0.61` |
+| `bmup` | Absolute upward shock $b^{up}$ | Decimal, 0 to 1 | I | `0.0214` |
+| `smdown` | Relative downward shock $s^{down}$ | Decimal, 0 to 1 | J | `0.58` |
+| `bmdown` | Absolute downward shock $b^{down}$ | Decimal, 0 to 1 | K | `0.0116` |
+| `rmfloor` | Floor of the rates after the downward shock | Decimal | L | `-0.0125` |
+
+All four files may use `,` or `;` as separator and `.` or `,` as decimal mark, so files saved by
 Excel with European settings are read correctly.
 
-The DLT maturities, the FSP, the LLFR weights, the UFR and the risk-corrected spreads are not
-calculated here. They come from EIOPA's DLT assessment, UFR methodology and representative
-portfolios, published with the risk-free rates.
+The DLT maturities, the FSP, the LLFR weights, the UFR, the risk-corrected spreads and the shock
+parameters are not calculated here. They come from EIOPA's DLT assessment, UFR methodology and
+representative portfolios, published with the risk-free rates, and from the standard formula.
 
 ### Output file `Output/swaps_curves.csv` or `Output/government_bonds_curves.csv`
 
@@ -395,6 +480,38 @@ are empty.
 | `Macro VA` | Macro VA; empty if not used (Excel's `#N/A`) | VA Term Structures L12 |
 | `Total VA` | Total VA, rounded to whole basis points | VA Term Structures L13 |
 | `Total VA LLFR (CC)` | LLFR of the curve with VA, continuously compounded | VA Term Structures K20 |
+
+### Output file `Output/swaps_irr_curves.csv` or `Output/government_bonds_irr_curves.csv`
+
+Written only with `irr_parameters.csv`. One row per maturity 1 to `Max Maturity`, all annually
+compounded. Columns from the sheets *IRR Up Shock* (Up) and *IRR Down Shock* (Down):
+
+| Column | Meaning | Sheet column |
+|---|---|---|
+| `Maturity` | Maturity in years | G |
+| `Basic RFR` | Basic risk-free interest rate term structure | Input Data & Extrapolation L |
+| `Bootstrapped Zero Rate AC` | Zero rate after the CRA, bootstrapped up to the last DLT maturity; empty after it | I |
+| `IRR Shock Up AC` | Bootstrapped rate after the upward shock; empty after the last DLT maturity | Up J |
+| `IRR Up RFR` | Term structure after the upward shock, rounded to 5 decimals | Up L |
+| `IRR Up with VA` | The same with the total VA; empty without a VA | Up O |
+| `IRR Shock Down AC` | Bootstrapped rate after the downward shock; empty after the last DLT maturity | Down J |
+| `IRR Down RFR` | Term structure after the downward shock, rounded to 5 decimals, at least the floor | Down L |
+| `IRR Down with VA` | The same with the total VA; empty without a VA | Down O |
+
+### Output file `Output/swaps_irr_parameters.csv` or `Output/government_bonds_irr_parameters.csv`
+
+Columns `Parameter, Value`, in the order of the workbook. Values not available without a VA are
+empty.
+
+| Parameter | Meaning | Sheet cell |
+|---|---|---|
+| `UFR Up` | UFR + 0.15% | IRR Up Shock H11 |
+| `VA` | Total VA used for the curves with VA | IRR Up Shock H12 (and IRR Down Shock H12) |
+| `LLFR IRR Up (CC)` | LLFR of the upward shocked rates, continuously compounded | IRR Up Shock L19 |
+| `LLFR* IRR Up (CC)` | The same with the VA | IRR Up Shock O19 |
+| `UFR Down` | UFR − 0.15% | IRR Down Shock H11 |
+| `LLFR IRR Down (CC)` | LLFR of the downward shocked rates, continuously compounded | IRR Down Shock K19 |
+| `LLFR* IRR Down (CC)` | The same with the VA | IRR Down Shock N19 |
 
 All rates are decimals written with full precision.
 
@@ -535,6 +652,36 @@ returns `CURRENCY_VA`, `W_CO`, `MACRO_VA` (`nan` if not used), `TOTAL_VA`, `TOTA
 basic RFR, `notional_va`, `credit_spread_sensitivity_ratio` and `country_adjustment_factor`
 calculate the single values.
 
+### The interest rate shocks
+
+`Code/interest_rate_risk.py` builds on `calculation.py` and imports only `math` and `typing`
+besides it. With `inputs` and `res` of the swap example in
+[The complete calculation](#the-complete-calculation):
+
+```python
+from pathlib import Path
+
+from data_io import read_irr_inputs
+from interest_rate_risk import calculate_irr_down_sheet, calculate_irr_up_sheet
+from validation import validate_irr_inputs
+
+irr = read_irr_inputs(Path("Examples/EIOPA_Example/Input"))   # the workbook's shock parameters
+validate_irr_inputs(irr, inputs["MAX_MATURITY"])
+up = calculate_irr_up_sheet(inputs, res, irr)                 # without VA
+down = calculate_irr_down_sheet(inputs, res, irr, TOTAL_VA=0.0034)
+print(up["LLFR"], up["IRR_RFR"][60])         # 0.040470233120777376 0.0403
+print(down["IRR_RFR"][60])                   # 0.02144
+print(down["IRR_VA_CURVE"][20])              # 0.01448  (with the VA of 34 bp)
+```
+
+`IRRInputs` holds the five columns of the parameter table as `{maturity: value}`: `IRR_SM_UP`,
+`IRR_BM_UP`, `IRR_SM_DOWN`, `IRR_BM_DOWN` and `RM_FLOOR`. Both functions return an `IRRResults`
+with `UFR`, `VA`, `LLFR`, `LLFR_STAR` (with VA), the columns `BOOTSTRAPPED_CURVE_AC`,
+`IRR_SHOCK_AC` and `IRR_SHOCK_CC` (`nan` after the last DLT maturity), and the curves `IRR_RFR` and
+`IRR_VA_CURVE`. Without `TOTAL_VA`, `VA`, `LLFR_STAR` and `IRR_VA_CURVE` are `nan`. The building
+blocks `shock_up`, `shock_down`, `apply_floor`, `bootstrapped_curve_ac` and
+`shocked_term_structures` are available on their own as well.
+
 ### Conventions
 
 - Maturities are whole years. Curves, flags and weights are dicts keyed by maturity, e.g.
@@ -544,9 +691,10 @@ calculate the single values.
 - Names follow the VBA in EIOPA's workbook to make the two easy to compare: `bootstrap_curve` is
   `BootstrapCurve`, `bootstrap_swaps` is `BootstrapSwaps`, `bootstrap_zeros` is `BootstrapZeros`,
   `get_llfr` is `GetLLFR`, and `Instrument`, `Rate`, `CouponFreq`, `LLFRweightsIn`, `MaxTenor`
-  and so on keep their VBA names. The VA has no VBA, so its names follow the workbook's named
-  ranges without the `R.`/`V.` prefix: `RCS_CU`, `RCS_CO`, `DTTA`, `MVFI`, `MVFI_NOTIONAL`,
-  `BEL_NOTIONAL`, `NOTIONAL_VA`, `CSSR`, `TOTAL_VA`, `W_CO` and so on. Every function's docstring
+  and so on keep their VBA names. The VA and the shocks have no VBA, so their names follow the
+  workbook's named ranges without the `R.`/`V.` prefix: `RCS_CU`, `RCS_CO`, `DTTA`, `MVFI`,
+  `MVFI_NOTIONAL`, `BEL_NOTIONAL`, `NOTIONAL_VA`, `CSSR`, `TOTAL_VA`, `W_CO`, `IRR_SM_UP`,
+  `RM_FLOOR` and so on. Every function's docstring
   describes its inputs, outputs and errors, with references to the documentation.
 
 ---
@@ -568,14 +716,22 @@ calculate the single values.
   its two intermediate values, the currency VA, the country adjustment factor, the total VA, both
   LLFRs, and the CSSR curve and the curve with VA at all 150 maturities. The macro VA, switched
   off in the workbook's example, is tested against the formula of §9.4.
-- **Unit tests** cover the calculation, the VA, the validation, reading and writing, and the main
-  script, with full line and branch coverage of every module (the main script's command-line part
-  is run in a separate process).
+
+  For the shocks, the sheets *IRR Up Shock* and *IRR Down Shock* of the workbook's example
+  (saved with instrument type `GVT`, total VA 34 bp) match exactly: the shifted UFRs, the LLFRs
+  with and without VA, and the bootstrapped rates, the shocked rates and both shocked curves at
+  all 150 maturities (`Code/tests/irr_workbook_values.csv` holds the workbook's values). The floor
+  does not bind in the workbook's example; it is tested on a curve with negative rates.
+- **Unit tests** cover the calculation, the VA, the shocks, the validation, reading and writing,
+  and the main script, with full line and branch coverage of every module (the main script's
+  command-line part is run in a separate process).
   Several tests check mathematical properties rather than stored numbers: every DLT swap reprices
   at par, every DLT bond rate is reproduced, a flat par curve gives a flat zero curve, forwards are
   constant between DLT points, and the extrapolated forward follows the formula and converges to
   the UFR. For the VA: the forwards up to the FSP rise by the VA, the LLFR by the first weight
   times the VA, a VA of 0 gives back the basic RFR, and the effect of the VA fades towards the UFR.
+  For the shocks: shocks of 0 give back the basic RFR up to the FSP and its LLFR, the floor leaves
+  the LLFRs unchanged, and a VA of 0 gives back the shocked curve without VA.
 
 Run the tests from the repository folder with either:
 
@@ -593,7 +749,10 @@ sheet *Input Data & Extrapolation*. The workbook's inputs are the same as those 
 `Output/government_bonds_curves.csv`, set the workbook's Instrument Type (H11) to `GVT` first.
 For the VA, compare `Output/swaps_va_curves.csv` and `Output/swaps_va_parameters.csv` with the
 sheets *CSSR Calculation* and *VA Term Structures*; `Input/va_parameters.csv` holds the workbook's
-VA inputs.
+VA inputs. For the shocks, copy the files of `Examples/EIOPA_Example/Input/` (government bonds,
+with the VA inputs and `irr_parameters.csv`) into `Input/`, run, and compare
+`Output/government_bonds_irr_curves.csv` and `Output/government_bonds_irr_parameters.csv` with
+the sheets *IRR Up Shock* and *IRR Down Shock* as the workbook is saved.
 
 ---
 
@@ -620,6 +779,18 @@ from a literal reading of the documentation.
 | Forwards for the curve with VA | From the basic RFR rounded to 5 decimals | From the basic RFR (10.1.6), not stated whether rounded |
 | USA and macro VA together | Python rejects it; the workbook adds the macro VA to a currency VA with USA | Not allowed (9.3.4) |
 
+For the interest rate shocks, the code follows the workbook in every point; the technical
+documentation does not describe them. Points worth knowing when comparing with other
+implementations:
+
+| Topic | This code and the workbook |
+|---|---|
+| Rates that are shocked | The bootstrapped zero rates after the CRA, annually compounded, up to the last DLT maturity; not the input rates and not the extrapolated basic RFR |
+| Floor of the downward shock | Applied to the rounded, extrapolated rates, without and with VA; it does not change the LLFR or the forwards with VA |
+| Forwards for the shocked curves with VA | From the unrounded shocked rates; the curve with VA of the basic RFR uses the rounded basic RFR |
+| VA in the shocked curves | The undertaking's total VA, not recalculated for the shock |
+| Shock parameters | The table of the sheet *Parameters* is an input (`irr_parameters.csv`); Python checks that it covers every maturity and holds decimals |
+
 ---
 
 ## Scope and limitations
@@ -630,7 +801,9 @@ Covered:
   *Input Data & Extrapolation* of EIOPA's workbook with either instrument type;
 - the undertaking-specific **volatility adjustment**: the CSSR curve, the CSSR, the currency VA
   with or without USA, the macro VA and the term structure with VA, i.e. the sheets *CSSR
-  Calculation* and *VA Term Structures*.
+  Calculation* and *VA Term Structures*;
+- the **interest rate risk shocks**: the term structures after the upward and downward shocks,
+  without and with VA, i.e. the sheets *IRR Up Shock* and *IRR Down Shock*.
 
 Not covered:
 
@@ -639,8 +812,8 @@ Not covered:
 - **Risk-corrected spreads, debt-to-total-assets ratios and the USA**: inputs, taken from EIOPA's
   publications and, for the USA, from the undertaking's own bond portfolio and the conditions of
   Article 77d(1c).
-- **Interest rate risk shocks** (sheets *IRR Up Shock* and *IRR Down Shock*) and the matching
-  adjustment (§11).
+- **Shock parameters**: the relative and absolute shocks and the floor are inputs, taken from the
+  workbook's sheet *Parameters*. The **matching adjustment** (§11) is not covered.
 - **Currency risk adjustment** for currencies pegged to the euro (§7). Include it in the CRA if needed.
 - **DLT assessment, FSP, LLFR weights and UFR**: these are inputs, taken from EIOPA's publications.
 - **Phasing-in of α**: choose the α of the relevant year yourself (see the table above).
@@ -653,17 +826,20 @@ Not covered:
 
 ```text
 Code/
-  main.py              deletes Output, then run_basic_rfr and run_va: read Input, validate,
-                       calculate, print a summary, write Output
+  main.py              deletes Output, then run_basic_rfr, run_va and run_irr: read Input,
+                       validate, calculate, print a summary, write Output
   calculation.py       the calculation (port of EIOPA's VBA module mExtrapolation); standard library only
   volatility_adjustment.py  the VA (port of the sheets CSSR Calculation and VA Term Structures)
+  interest_rate_risk.py     the shocks (port of the sheets IRR Up Shock and IRR Down Shock)
   validation.py        checks that the inputs are complete and plausible
   data_io.py           reading Input/ and writing Output/
-  tests/               unit tests
-Input/                 curve.csv, parameters.csv and the optional va_parameters.csv
-Output/                swaps_*.csv and government_bonds_*.csv (curves and parameters, with VA: va_*)
+  tests/               unit tests; irr_workbook_values.csv holds the workbook's shocked curves
+Input/                 curve.csv, parameters.csv and the optional va_parameters.csv and irr_parameters.csv
+Output/                swaps_*.csv and government_bonds_*.csv (curves and parameters, with VA: va_*,
+                       shocks: irr_*)
 Examples/
-  EIOPA_Example/       the workbook's example: inputs (Input/) and a copy of the workbook
+  EIOPA_Example/       the workbook's example: inputs (Input/, with the shock parameters in
+                       irr_parameters.csv) and a copy of the workbook
   Example_September_2026/
                        inputs for 30 September 2026 (Input_EUR, Input_IS, Input_UK), EIOPA's
                        published files for that date (EIOPA_RFR_20260930), charts and a copy of

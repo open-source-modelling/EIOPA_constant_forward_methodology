@@ -10,6 +10,7 @@ import shutil
 from pathlib import Path
 
 from calculation import INSTRUMENTS, Curve, Flags, SheetInputs, SheetResults
+from interest_rate_risk import SHEET_COLUMNS, IRRInputs, IRRResults
 from volatility_adjustment import CSSRResults, VAInputs, VAResults
 
 PROJECT_DIR: Path = Path(__file__).resolve().parent.parent
@@ -19,6 +20,7 @@ OUTPUT_DIR: Path = PROJECT_DIR / "Output"
 CURVE_FILE: str = "curve.csv"
 PARAMETERS_FILE: str = "parameters.csv"
 VA_PARAMETERS_FILE: str = "va_parameters.csv"     # optional: without it, no VA is calculated
+IRR_PARAMETERS_FILE: str = "irr_parameters.csv"   # optional: without it, no interest rate shocks are calculated
 # result files per instrument type: (curves, parameters)
 OUTPUT_FILES: dict[str, tuple[str, str]] = {
     "SWP": ("swaps_curves.csv", "swaps_parameters.csv"),
@@ -29,8 +31,15 @@ VA_OUTPUT_FILES: dict[str, tuple[str, str]] = {
     "SWP": ("swaps_va_curves.csv", "swaps_va_parameters.csv"),
     "GVT": ("government_bonds_va_curves.csv", "government_bonds_va_parameters.csv"),
 }
+# interest rate shock result files per instrument type: (curves, parameters)
+IRR_OUTPUT_FILES: dict[str, tuple[str, str]] = {
+    "SWP": ("swaps_irr_curves.csv", "swaps_irr_parameters.csv"),
+    "GVT": ("government_bonds_irr_curves.csv", "government_bonds_irr_parameters.csv"),
+}
 
 CURVE_COLUMNS: list[str] = ["Maturity", "DLT", "LLFR Weight", "Input Rate"]
+# sheet Parameters G16:L16
+IRR_COLUMNS: list[str] = ["Maturity", *SHEET_COLUMNS.values()]
 # Coupon Frequency is required for swaps only
 PARAMETER_NAMES: list[str] = ["Instrument", "Coupon Frequency", "UFR", "Convergence", "CRA", "Max Maturity"]
 
@@ -255,6 +264,52 @@ def read_va_inputs(folder: Path = INPUT_DIR) -> VAInputs | None:
     )
 
 
+def read_irr_inputs(folder: Path = INPUT_DIR) -> IRRInputs | None:
+    """Read the parameters of the interest rate shocks from irr_parameters.csv, if the file exists.
+
+    The file has one row per maturity with the columns of sheet Parameters G16:L16: Maturity,
+    smup, bmup, smdown, bmdown and rmfloor. Rows may go beyond Max Maturity (the regulatory table
+    runs to 150 years); those are not used. validation.validate_irr_inputs checks that every
+    maturity of the curve has all five values and that they make sense.
+
+    Args:
+        folder: folder with irr_parameters.csv; the project's Input folder by default.
+
+    Returns:
+        IRRInputs, {maturity: value} per column; an empty cell is a missing key. None if the file
+        does not exist.
+
+    Raises:
+        ValueError: if a column is missing, a value is not a number, a maturity is not a whole
+            number of at least 1, or a maturity appears twice. The message names the file and line.
+    """
+    path: Path = folder / IRR_PARAMETERS_FILE
+    if not path.exists():
+        return None
+    rows: list[dict[str, str]] = read_csv(path)
+    missing: list[str] = [c for c in IRR_COLUMNS if rows and c not in rows[0]]
+    if not rows or missing:
+        raise ValueError(f"{path}: expected columns {', '.join(IRR_COLUMNS)}")
+
+    irr: dict[str, Curve] = {field: {} for field in SHEET_COLUMNS}
+    seen: set[int] = set()
+    for line, row in enumerate(rows, start=2):
+        where: str = f"{path.name} line {line}"
+        maturity: float = parse_number(row["Maturity"], where)
+        if not maturity.is_integer() or maturity < 1:
+            raise ValueError(f"{where}: maturity must be a whole number of at least 1 (is {row['Maturity']})")
+        t: int = int(maturity)
+        if t in seen:
+            raise ValueError(f"{where}: maturity {t} appears twice")
+        seen.add(t)
+        for field, column in SHEET_COLUMNS.items():
+            if row[column]:
+                irr[field][t] = parse_number(row[column], f"{where} {column}")
+
+    return IRRInputs(IRR_SM_UP=irr["IRR_SM_UP"], IRR_BM_UP=irr["IRR_BM_UP"], IRR_SM_DOWN=irr["IRR_SM_DOWN"],
+                     IRR_BM_DOWN=irr["IRR_BM_DOWN"], RM_FLOOR=irr["RM_FLOOR"])
+
+
 # --------------------------------------------------------------------------
 # Writing (folder Output)
 # --------------------------------------------------------------------------
@@ -417,5 +472,48 @@ def save_va_results(inputs: SheetInputs, res: SheetResults, va: VAInputs, cssr: 
         ["Macro VA", va_res["MACRO_VA"] if va_res else math.nan],
         ["Total VA", va_res["TOTAL_VA"] if va_res else math.nan],
         ["Total VA LLFR (CC)", va_res["TOTAL_VA_LLFR"] if va_res else math.nan],
+    ])
+    return [curves_path, parameters_path]
+
+
+def save_irr_results(inputs: SheetInputs, res: SheetResults, up: IRRResults, down: IRRResults,
+                     folder: Path = OUTPUT_DIR) -> list[Path]:
+    """Write the results of the interest rate shocks to the IRR result files of the instrument type.
+
+    The files are swaps_irr_curves.csv and swaps_irr_parameters.csv for swaps, and
+    government_bonds_irr_curves.csv and government_bonds_irr_parameters.csv for government bonds
+    (IRR_OUTPUT_FILES). The curves file has one row per maturity 1..Max Maturity with the Basic
+    RFR, the bootstrapped zero rate (AC) and, for each shock, the shocked rates (AC, empty after
+    the last DLT maturity), the shocked curve and the shocked curve with VA (empty without a VA).
+    The parameters file lists the UFR, the VA and the LLFRs in the order of the workbook: sheet
+    'IRR Up Shock', then sheet 'IRR Down Shock' (the VA, the same on both, once).
+
+    Args:
+        inputs: the inputs of the basic RFR.
+        res: the basic RFR, from calculation.calculate_sheet.
+        up: the results of interest_rate_risk.calculate_irr_up_sheet.
+        down: the results of interest_rate_risk.calculate_irr_down_sheet.
+        folder: target folder; the project's Output folder by default.
+
+    Returns:
+        The paths of the written files: [curves file, parameters file].
+    """
+    curves_file, parameters_file = IRR_OUTPUT_FILES[inputs["Instrument"]]
+    curves_path: Path = save_table(
+        folder, curves_file,
+        ["Maturity", "Basic RFR", "Bootstrapped Zero Rate AC", "IRR Shock Up AC", "IRR Up RFR", "IRR Up with VA",
+         "IRR Shock Down AC", "IRR Down RFR", "IRR Down with VA"],
+        [[t, res["BASIC_RFR"][t], up["BOOTSTRAPPED_CURVE_AC"][t], up["IRR_SHOCK_AC"][t], up["IRR_RFR"][t],
+          up["IRR_VA_CURVE"][t], down["IRR_SHOCK_AC"][t], down["IRR_RFR"][t], down["IRR_VA_CURVE"][t]]
+         for t in range(1, inputs["MAX_MATURITY"] + 1)])
+    # in the order of the workbook: IRR Up Shock H11, H12, L19, O19; IRR Down Shock H11, K19, N19
+    parameters_path: Path = save_table(folder, parameters_file, ["Parameter", "Value"], [
+        ["UFR Up", up["UFR"]],
+        ["VA", up["VA"]],
+        ["LLFR IRR Up (CC)", up["LLFR"]],
+        ["LLFR* IRR Up (CC)", up["LLFR_STAR"]],
+        ["UFR Down", down["UFR"]],
+        ["LLFR IRR Down (CC)", down["LLFR"]],
+        ["LLFR* IRR Down (CC)", down["LLFR_STAR"]],
     ])
     return [curves_path, parameters_path]

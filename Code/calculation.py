@@ -456,6 +456,23 @@ def excel_round(curve: Curve, digits: int = 5) -> Curve:
     return {t: excel_round_value(z, digits) for t, z in curve.items()}
 
 
+def last_liquid_point(DLT: Flags) -> int:
+    """The last liquid point: the longest maturity with DLT = 1 (the sheet's LET variable LLP).
+
+    The bootstrapped curves end here: BootstrapCurve gets it as MaxTenor.
+
+    Args:
+        DLT: {maturity: 1 or 0}, DLT flags.
+
+    Returns:
+        The longest maturity with DLT = 1.
+
+    Raises:
+        ValueError: if no maturity has DLT = 1 (prevented by validation.validate_inputs).
+    """
+    return max(t for t in DLT if DLT[t] == 1)                       # MAX(FILTER(R.MATURITY, R.DLT=1))
+
+
 def calculate_sheet(Instrument: str, CouponFreq: int | None, CRA: float, UFR: float, alpha: float, dlt: Flags,
                     LLFRweightsIn: Curve, Rate: Curve, MAX_MATURITY: int) -> SheetResults:
     """Calculate the sheet 'Input Data & Extrapolation': bootstrapped curve, FSP, LLFR and basic RFR.
@@ -497,7 +514,7 @@ def calculate_sheet(Instrument: str, CouponFreq: int | None, CRA: float, UFR: fl
 
     # K25: BootstrapCurve(V.INSTRUMENT, R.BASECURVE, R.DLT, "A", V.CRA, V.COUPON_FREQ, LLP, "C", "Z"),
     # which calls BootstrapSwaps for instrument "SWP" and BootstrapZeros otherwise
-    LLP: int = max(t for t in DLT if DLT[t] == 1)                     # MAX(FILTER(R.MATURITY, R.DLT=1))
+    LLP: int = last_liquid_point(DLT)
     BOOTSTRAPPED_CURVE: Curve = bootstrap_curve(Instrument, BASECURVE, DLT, "A", CRA, CouponFreq, LLP, "C", "Z",
                                                  MAX_MATURITY)
     # H13: XMATCH(TRUE, R.LLFR_WEIGHTS > 0, 0)

@@ -14,10 +14,12 @@ from pathlib import Path
 
 import data_io
 from calculation import SheetInputs, SheetResults, calculate_sheet
-from data_io import (CURVE_FILE, OUTPUT_FILES, PARAMETERS_FILE, VA_OUTPUT_FILES, VA_PARAMETERS_FILE, clear_output_folder,
-                     csv_value, parse_number, read_csv, read_inputs, read_va_inputs, save_results, save_table,
-                     save_va_results)
+from data_io import (CURVE_FILE, IRR_OUTPUT_FILES, IRR_PARAMETERS_FILE, OUTPUT_FILES, PARAMETERS_FILE, VA_OUTPUT_FILES,
+                     VA_PARAMETERS_FILE, clear_output_folder, csv_value, parse_number, read_csv, read_inputs,
+                     read_irr_inputs, read_va_inputs, save_irr_results, save_results, save_table, save_va_results)
+from interest_rate_risk import IRRResults, calculate_irr_down_sheet, calculate_irr_up_sheet
 from tests.test_calculation import example_inputs
+from tests.test_interest_rate_risk import EXAMPLE_INPUT_DIR, EXAMPLE_VA, example_irr_inputs
 from tests.test_volatility_adjustment import example_va_inputs
 from volatility_adjustment import CSSRResults, VAResults, calculate_cssr_sheet, calculate_va_sheet
 
@@ -33,6 +35,9 @@ CURVE_TEXT: str = ("Maturity,DLT,LLFR Weight,Input Rate\n"
 VA_PARAMETERS_TEXT: str = ("Parameter,Value\nCurrency RCS,0.01\nCountry RCS,0.014\nDebt to Total Assets,0.5\n"
                            "Use Macro VA,0\nUSA,0.8\nMV Fixed Income,500000\nMV Fixed Income CSSR Curve,490000\n"
                            "BEL,870000\nBEL CSSR Curve,850000\n")
+IRR_PARAMETERS_TEXT: str = ("Maturity,smup,bmup,smdown,bmdown,rmfloor\n"
+                            "1,0.61,0.0214,0.58,0.0116,-0.0125\n"
+                            "2,0.53,0.0186,0.51,0.0099,-0.0125\n")
 
 
 class TempFolderTestCase(unittest.TestCase):
@@ -507,6 +512,125 @@ class TestSaveVAResults(TempFolderTestCase):
         paths = save_va_results(inputs, res, example_va_inputs(), calculate_cssr_sheet(inputs, res, example_va_inputs()),
                                 None, self.folder)
         self.assertEqual(paths, [self.folder / name for name in VA_OUTPUT_FILES["GVT"]])
+
+
+class TestReadIRRInputs(TempFolderTestCase):
+
+    def test_no_file_means_no_shocks(self) -> None:
+        self.assertIsNone(read_irr_inputs(self.folder))
+
+    def test_reads_the_columns(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, IRR_PARAMETERS_TEXT)
+        irr = read_irr_inputs(self.folder)
+        self.assertEqual(irr, {"IRR_SM_UP": {1: 0.61, 2: 0.53}, "IRR_BM_UP": {1: 0.0214, 2: 0.0186},
+                               "IRR_SM_DOWN": {1: 0.58, 2: 0.51}, "IRR_BM_DOWN": {1: 0.0116, 2: 0.0099},
+                               "RM_FLOOR": {1: -0.0125, 2: -0.0125}})
+
+    def test_reads_the_workbook_table(self) -> None:
+        # the EIOPA example: sheet Parameters G16:L166, with the interpolated values at full precision
+        irr = read_irr_inputs(EXAMPLE_INPUT_DIR)
+        assert irr is not None
+        self.assertEqual(sorted(irr["RM_FLOOR"]), list(range(1, 151)))
+        self.assertEqual((irr["IRR_SM_UP"][1], irr["IRR_BM_UP"][1], irr["IRR_SM_DOWN"][1], irr["IRR_BM_DOWN"][1]),
+                         (0.61, 0.0214, 0.58, 0.0116))
+        self.assertEqual(irr["RM_FLOOR"][8], -0.012225384615384615)      # Parameters L24, interpolated
+        self.assertEqual((irr["IRR_BM_UP"][60], irr["IRR_SM_DOWN"][150]), (0.0, 0.2))
+
+    def test_empty_cells_are_missing(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, "Maturity,smup,bmup,smdown,bmdown,rmfloor\n1,0.61,,0.58,0.0116,\n")
+        irr = read_irr_inputs(self.folder)
+        assert irr is not None
+        self.assertEqual((irr["IRR_SM_UP"], irr["IRR_BM_UP"], irr["RM_FLOOR"]), ({1: 0.61}, {}, {}))
+
+    def test_excel_style_file(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, "Maturity;smup;bmup;smdown;bmdown;rmfloor\n1;0,61;0,0214;0,58;0,0116;-0,0125\n")
+        irr = read_irr_inputs(self.folder)
+        assert irr is not None
+        self.assertEqual((irr["IRR_SM_UP"][1], irr["RM_FLOOR"][1]), (0.61, -0.0125))
+
+    def test_missing_column(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, "Maturity,smup,bmup,smdown,bmdown\n1,0.61,0.0214,0.58,0.0116\n")
+        with self.assertRaisesRegex(ValueError, "expected columns Maturity, smup, bmup, smdown, bmdown, rmfloor"):
+            read_irr_inputs(self.folder)
+
+    def test_file_without_rows(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, "Maturity,smup,bmup,smdown,bmdown,rmfloor\n")
+        with self.assertRaisesRegex(ValueError, "expected columns"):
+            read_irr_inputs(self.folder)
+
+    def test_maturity_must_be_a_whole_number_of_at_least_one(self) -> None:
+        for maturity in ("1.5", "0"):
+            self.write(IRR_PARAMETERS_FILE, f"Maturity,smup,bmup,smdown,bmdown,rmfloor\n{maturity},0.6,0.02,0.5,0.01,-0.01\n")
+            with self.assertRaisesRegex(ValueError, "irr_parameters.csv line 2: maturity must be a whole number"):
+                read_irr_inputs(self.folder)
+
+    def test_maturity_twice(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, IRR_PARAMETERS_TEXT + "1,,,,,\n")
+        with self.assertRaisesRegex(ValueError, "line 4: maturity 1 appears twice"):
+            read_irr_inputs(self.folder)
+
+    def test_text_in_a_number(self) -> None:
+        self.write(IRR_PARAMETERS_FILE, "Maturity,smup,bmup,smdown,bmdown,rmfloor\n1,0.61,abc,0.58,0.0116,-0.0125\n")
+        with self.assertRaisesRegex(ValueError, "irr_parameters.csv line 2 bmup: 'abc' is not a number"):
+            read_irr_inputs(self.folder)
+
+
+class TestSaveIRRResults(TempFolderTestCase):
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.inputs: SheetInputs = example_inputs("GVT")
+        self.res: SheetResults = calculate_sheet(**self.inputs)
+        self.up: IRRResults = calculate_irr_up_sheet(self.inputs, self.res, example_irr_inputs(), EXAMPLE_VA)
+        self.down: IRRResults = calculate_irr_down_sheet(self.inputs, self.res, example_irr_inputs(), EXAMPLE_VA)
+        self.paths: list[Path] = save_irr_results(self.inputs, self.res, self.up, self.down, self.folder)
+
+    def test_writes_both_files(self) -> None:
+        self.assertEqual(IRR_OUTPUT_FILES["GVT"], ("government_bonds_irr_curves.csv",
+                                                   "government_bonds_irr_parameters.csv"))
+        self.assertEqual(self.paths, [self.folder / name for name in IRR_OUTPUT_FILES["GVT"]])
+
+    def test_curves_file(self) -> None:
+        rows = read_csv(self.paths[0])
+        self.assertEqual(list(rows[0]), ["Maturity", "Basic RFR", "Bootstrapped Zero Rate AC", "IRR Shock Up AC",
+                                         "IRR Up RFR", "IRR Up with VA", "IRR Shock Down AC", "IRR Down RFR",
+                                         "IRR Down with VA"])
+        self.assertEqual([int(row["Maturity"]) for row in rows], list(range(1, 151)))
+        for row in rows:
+            t = int(row["Maturity"])
+            self.assertEqual((float(row["Basic RFR"]), float(row["IRR Up RFR"]), float(row["IRR Up with VA"]),
+                              float(row["IRR Down RFR"]), float(row["IRR Down with VA"])),
+                             (self.res["BASIC_RFR"][t], self.up["IRR_RFR"][t], self.up["IRR_VA_CURVE"][t],
+                              self.down["IRR_RFR"][t], self.down["IRR_VA_CURVE"][t]))
+        self.assertEqual(float(rows[49]["IRR Shock Down AC"]), self.down["IRR_SHOCK_AC"][50])
+        # the bootstrapped and shocked rates end at the last DLT maturity: empty cells
+        self.assertEqual((rows[50]["Bootstrapped Zero Rate AC"], rows[50]["IRR Shock Up AC"],
+                          rows[50]["IRR Shock Down AC"]), ("", "", ""))
+
+    def test_parameters_file(self) -> None:
+        values = {row["Parameter"]: row["Value"] for row in read_csv(self.paths[1])}
+        self.assertEqual(list(values), ["UFR Up", "VA", "LLFR IRR Up (CC)", "LLFR* IRR Up (CC)", "UFR Down",
+                                        "LLFR IRR Down (CC)", "LLFR* IRR Down (CC)"])
+        self.assertEqual((float(values["UFR Up"]), float(values["VA"]), float(values["UFR Down"])),
+                         (0.0345, 0.0034, 0.0315))
+        self.assertEqual((float(values["LLFR IRR Up (CC)"]), float(values["LLFR* IRR Down (CC)"])),
+                         (self.up["LLFR"], self.down["LLFR_STAR"]))
+
+    def test_without_va_the_va_cells_are_empty(self) -> None:
+        up = calculate_irr_up_sheet(self.inputs, self.res, example_irr_inputs())
+        down = calculate_irr_down_sheet(self.inputs, self.res, example_irr_inputs())
+        paths = save_irr_results(self.inputs, self.res, up, down, self.folder)
+        self.assertTrue(all(row["IRR Up with VA"] == "" and row["IRR Down with VA"] == "" and row["IRR Up RFR"] != ""
+                            for row in read_csv(paths[0])))
+        values = {row["Parameter"]: row["Value"] for row in read_csv(paths[1])}
+        self.assertEqual((values["VA"], values["LLFR* IRR Up (CC)"], values["LLFR* IRR Down (CC)"]), ("", "", ""))
+
+    def test_files_are_named_after_the_instrument(self) -> None:
+        inputs = example_inputs("SWP")
+        res = calculate_sheet(**inputs)
+        paths = save_irr_results(inputs, res, calculate_irr_up_sheet(inputs, res, example_irr_inputs()),
+                                 calculate_irr_down_sheet(inputs, res, example_irr_inputs()), self.folder)
+        self.assertEqual(paths, [self.folder / name for name in IRR_OUTPUT_FILES["SWP"]])
 
 
 if __name__ == "__main__":

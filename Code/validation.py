@@ -1,6 +1,7 @@
 """Validation of the inputs before the calculation."""
 
 from calculation import INSTRUMENTS, Curve, SheetInputs
+from interest_rate_risk import SHEET_COLUMNS, IRRInputs
 from volatility_adjustment import VAInputs, notional_va
 
 
@@ -135,3 +136,66 @@ def validate_va_inputs(va: VAInputs) -> None:
 
     if problems:
         raise ValueError("invalid VA inputs:\n  - " + "\n  - ".join(problems))
+
+
+def maturity_ranges(maturities: list[int]) -> str:
+    """Write a list of maturities compactly, runs of consecutive maturities as ranges.
+
+    Args:
+        maturities: the maturities, in any order.
+
+    Returns:
+        E.g. "1-3, 7, 51-150" for 1, 2, 3, 7, 51, 52, ..., 150.
+    """
+    runs: list[list[int]] = []                          # [first, last] of each run
+    for t in sorted(maturities):
+        if runs and t == runs[-1][1] + 1:
+            runs[-1][1] = t
+        else:
+            runs.append([t, t])
+    return ", ".join(str(first) if first == last else f"{first}-{last}" for first, last in runs)
+
+
+def validate_irr_inputs(irr: IRRInputs, MAX_MATURITY: int) -> None:
+    """Check that the parameters of the interest rate shocks cover the curve and look plausible.
+
+    All rules are checked and every problem is reported, so that all of them can be fixed at once.
+
+    Rules:
+    - Every maturity 1..Max Maturity has all five values (smup, bmup, smdown, bmdown, rmfloor);
+      maturities beyond Max Maturity are allowed and not used.
+    - The relative shocks smup and smdown are decimals between 0 and 1, e.g. 0.61 and not 61.
+    - The absolute shocks bmup and bmdown are decimals between 0 and 1 (0 included, 1 not),
+      e.g. 0.0214 for 214 basis points.
+    - The floor rmfloor is a decimal (between -1 and 1), e.g. -0.0125 for -1.25%.
+
+    Args:
+        irr: the shock parameters, as returned by data_io.read_irr_inputs.
+        MAX_MATURITY: the longest maturity of the curve.
+
+    Returns:
+        None if the inputs are valid.
+
+    Raises:
+        ValueError: "invalid interest rate shock inputs:" followed by one line per problem found.
+    """
+    problems: list[str] = []
+    for field, column in SHEET_COLUMNS.items():
+        values: Curve = irr[field]  # type: ignore[literal-required]
+        missing: list[int] = [t for t in range(1, MAX_MATURITY + 1) if t not in values]
+        if missing:
+            problems.append(f"{column} is missing for maturities {maturity_ranges(missing)}")
+        if field in ("IRR_SM_UP", "IRR_SM_DOWN"):
+            bad: list[int] = [t for t, x in values.items() if not 0 <= x <= 1]
+            rule: str = "a decimal between 0 and 1, e.g. 0.61 for 61%"
+        elif field in ("IRR_BM_UP", "IRR_BM_DOWN"):
+            bad = [t for t, x in values.items() if not 0 <= x < 1]
+            rule = "a decimal between 0 and 1, e.g. 0.0214 for 214 basis points"
+        else:
+            bad = [t for t, x in values.items() if not -1 < x < 1]
+            rule = "a decimal, e.g. -0.0125 for -1.25%"
+        if bad:
+            problems.append(f"{column} must be {rule}; check maturities {maturity_ranges(bad)}")
+
+    if problems:
+        raise ValueError("invalid interest rate shock inputs:\n  - " + "\n  - ".join(problems))
