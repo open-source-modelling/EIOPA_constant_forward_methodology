@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "EIOPA risk-free rate extrapolation in Python"
+abstract: >-
+  A transparent Python implementation of EIOPA's method for deriving the Solvency II basic
+  risk-free interest rate term structure from swap rates or government bond zero rates:
+  constant-forward bootstrapping up to the first smoothing point, followed by extrapolation of
+  forward rates from the last liquid forward rate to the ultimate forward rate. It also calculates
+  the undertaking-specific volatility adjustment and the term structures after the interest rate
+  risk shocks.
+authors:
+  - name: "Open-Source Modelling"
+url: "https://qnityconsultants.com"
+repository-code: "https://github.com/open-source-modelling/EIOPA_constant_forward_methodology"
+license: MIT
+keywords:
+  - Solvency II
+  - EIOPA
+  - risk-free rate
+  - yield curve
+  - extrapolation
+  - ultimate forward rate
+  - volatility adjustment
+  - actuarial
+references:
+  - type: report
+    title: "RFR Technical Documentation: the methodology to derive EIOPA's risk-free interest rate term structures"
+    authors:
+      - name: "European Insurance and Occupational Pensions Authority (EIOPA)"
+    number: "EIOPA-BoS-26/198"
+    year: 2026
+    month: 5
+    url: "https://www.eiopa.europa.eu/tools-and-data/risk-free-interest-rate-term-structures_en"
