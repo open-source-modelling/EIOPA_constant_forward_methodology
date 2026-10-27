@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eiopa-rfr"
+dynamic = ["version"]
+description = "Solvency II risk-free interest rate term structures with EIOPA's constant-forward method, the volatility adjustment and the interest rate shocks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Open-Source Modelling" }]
+keywords = [
+    "Solvency II", "EIOPA", "risk-free rate", "yield curve", "extrapolation", "ultimate forward rate",
+    "volatility adjustment", "actuarial",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/open-source-modelling/EIOPA_constant_forward_methodology"
+Documentation = "https://github.com/open-source-modelling/EIOPA_constant_forward_methodology#readme"
+Source = "https://github.com/open-source-modelling/EIOPA_constant_forward_methodology/tree/main/Code"
+Issues = "https://github.com/open-source-modelling/EIOPA_constant_forward_methodology/issues"
+
+[project.scripts]
+eiopa-rfr = "eiopa_rfr.cli:main"
+
+[tool.hatch.version]
+path = "src/eiopa_rfr/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eiopa_rfr"]
+
+# only what is listed here goes into the source distribution; sync_code.py is left out because
+# it needs the rest of the repository
+[tool.hatch.build.targets.sdist]
+include = ["/src/eiopa_rfr", "/tests", "/README.md", "/LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
