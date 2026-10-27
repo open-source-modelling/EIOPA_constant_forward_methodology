@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EIOPA RFR Inputs and Outputs</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Inputs, calculation and outputs of the Python implementation of EIOPA's risk-free rate method, and where each output is in EIOPA's Excel workbook.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: reference document. Sticky contents on wide screens, one column on phones.
+   Colours: the three blues EIOPA's workbook uses for input, intermediate and output cells, on a cool paper. */
+:root {
+  --paper: #f8fafc; --surface: #ffffff; --ink: #142235; --ink-soft: #4b5c72; --rule: #d6dfea;
+  --accent: #1d5592; --code-bg: #edf2f8;
+  --cell-in: #98b6d6; --cell-mid: #e1eaf3; --cell-out: #d3dfed; --cell-ink: #142235; --cell-na: #eceff3;
+  --grid-head: #eef1f5; --grid-line: #d4dae2;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, "Cascadia Mono", "Courier New", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e1622; --surface: #131e2c; --ink: #e2e9f2; --ink-soft: #9db0c6; --rule: #273649;
+    --accent: #8fb8e4; --code-bg: #172435;
+    --cell-in: #3b5c82; --cell-mid: #1b2838; --cell-out: #2a4361; --cell-ink: #e8f0f9; --cell-na: #1a2029;
+    --grid-head: #18222f; --grid-line: #2a384a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e1622; --surface: #131e2c; --ink: #e2e9f2; --ink-soft: #9db0c6; --rule: #273649;
+  --accent: #8fb8e4; --code-bg: #172435;
+  --cell-in: #3b5c82; --cell-mid: #1b2838; --cell-out: #2a4361; --cell-ink: #e8f0f9; --cell-na: #1a2029;
+  --grid-head: #18222f; --grid-line: #2a384a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 15px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+code { font-family: var(--font-mono); font-size: 0.86em; }
+b { font-weight: 600; }
+.muted { color: var(--ink-soft); }
+.small { font-size: 13px; color: var(--ink-soft); }
+
+.page { max-width: 1200px; margin: 0 auto; display: grid; gap: 24px 56px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1040px) { .page { grid-template-columns: 210px minmax(0, 1fr); } }
+
+header.top { grid-column: 1 / -1; padding-block: 48px 8px; border-bottom: 1px solid var(--rule); }
+.eyebrow { font: 600 12px/1 var(--font-display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin: 0 0 14px; }
+h1 { font: 600 clamp(2rem, 4.2vw, 2.9rem)/1.1 var(--font-display); margin: 0 0 16px; text-wrap: balance; letter-spacing: -0.01em; }
+.lead { font-size: 17px; max-width: 68ch; margin: 0 0 20px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 13px; color: var(--ink-soft); margin: 0 0 28px; }
+
+nav.toc { align-self: start; font-family: var(--font-display); }
+@media (min-width: 1040px) { nav.toc { position: sticky; top: 24px; padding-top: 40px; } }
+nav.toc p { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 10px; }
+nav.toc ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+nav.toc li ul { padding-left: 14px; margin: 2px 0 6px; }
+nav.toc a { display: block; padding: 3px 0; color: var(--ink); text-decoration: none; font-size: 15px; }
+nav.toc li ul a { font-size: 13.5px; color: var(--ink-soft); font-family: var(--font-mono); }
+nav.toc a:hover { color: var(--accent); }
+@media (max-width: 1039px) { nav.toc { border: 1px solid var(--rule); background: var(--surface); padding: 16px 18px; border-radius: 6px; } nav.toc > ul { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); } nav.toc li ul { display: none; } }
+
+main { min-width: 0; }
+section { padding-top: 40px; }
+h2 { font: 600 1.75rem/1.2 var(--font-display); margin: 0 0 12px; padding-top: 10px; border-top: 3px solid var(--ink); text-wrap: balance; }
+h3 { font: 600 1.12rem/1.3 var(--font-body); margin: 36px 0 8px; text-wrap: balance; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+section p, section li { max-width: 72ch; }
+h2[id], h3[id], section[id] { scroll-margin-top: 16px; }
+
+.badge { font: 500 11px/1 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 7px; border-radius: 3px; white-space: nowrap; }
+.badge.req { background: var(--ink); color: var(--paper); }
+.badge.opt { border: 1px solid var(--ink-soft); color: var(--ink-soft); }
+code.file { font-weight: 500; background: none; color: var(--ink); }
+h3 code.file { font-size: 1em; }
+code.path { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+
+.tab { display: inline-block; font: 500 12px/1.4 var(--font-body); padding: 1px 8px 2px; border: 1px solid var(--rule); border-top: 2px solid var(--accent); background: var(--surface); border-radius: 0 0 4px 4px; white-space: nowrap; }
+code.ref { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+code.nm { color: var(--accent); white-space: nowrap; }
+.where { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.note { display: block; font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
+
+.tbl { overflow-x: auto; margin: 12px 0 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--rule); }
+tbody tr:last-child td { border-bottom: 0; }
+thead th { font: 600 11.5px/1.3 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); background: var(--grid-head); white-space: nowrap; }
+td:first-child { white-space: nowrap; }
+table.out td:last-child, table.rows td { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+table.out td:last-child .muted { font-family: var(--font-body); }
+table.rows td:first-child { font-family: var(--font-body); }
+
+pre { margin: 10px 0 16px; overflow-x: auto; }
+pre.csv { background: var(--code-bg); padding: 12px 14px; border-radius: 6px; font-size: 13px; line-height: 1.5; max-width: 520px; }
+pre.cmd { background: var(--ink); color: var(--paper); padding: 10px 14px; border-radius: 6px; font-size: 13.5px; }
+
+.facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; margin: 16px 0 8px; }
+@media (min-width: 900px) { .facts { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.facts > div { background: var(--surface); padding: 10px 14px; display: grid; gap: 2px; font-size: 14px; }
+.facts .k { font: 600 11px/1.3 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); }
+
+.aside, .example { border: 1px solid var(--rule); background: var(--surface); border-radius: 6px; padding: 14px 18px; margin: 16px 0; }
+.aside-title, .check-title { font: 600 13px/1.3 var(--font-display); letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 6px; color: var(--ink); }
+.aside ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.checks, .howto, .run { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 12px 0; }
+.checks > div, .howto > div, .run > div { min-width: 0; border-top: 1px solid var(--rule); padding-top: 12px; }
+.checks ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.howto p, .run p { font-size: 14px; margin: 0 0 6px; }
+
+.flow { border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); margin: 16px 0 24px; }
+.flow-head, .flow-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; padding: 12px 16px; align-items: start; }
+.flow-head { font: 600 11.5px/1.3 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); background: var(--grid-head); border-bottom: 1px solid var(--rule); border-radius: 6px 6px 0 0; }
+.flow-row + .flow-row { border-top: 1px solid var(--rule); }
+.flow-row > span { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; min-width: 0; }
+.flow-row code.file { display: block; width: 100%; }
+.flow-row > span.txt { display: block; }
+.flow .n { font: 600 22px/1 var(--font-display); color: var(--accent); }
+@media (max-width: 820px) {
+  .flow-head { display: none; }
+  .flow-row { grid-template-columns: 32px minmax(0, 1fr); }
+  .flow-row > span:not(.n) { grid-column: 2; }
+}
+
+ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 16px 0 0; display: grid; gap: 4px; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 8px; padding: 6px 0 18px; border-bottom: 1px solid var(--rule); }
+ol.steps > li::before { content: counter(step); font: 600 26px/1 var(--font-display); color: var(--accent); padding-top: 6px; grid-row: 1 / span 20; }
+ol.steps > li > * { grid-column: 2; }
+ol.steps h3 { margin-top: 4px; }
+.cite { font: 500 12px/1 var(--font-mono); color: var(--ink-soft); }
+.formula { font-family: "Cambria Math", "Cambria", "STIX Two Math", Georgia, serif; font-size: 16px; background: var(--code-bg); padding: 10px 14px; border-radius: 6px; overflow-x: auto; max-width: 100%; line-height: 1.9; }
+.xl { font-size: 13.5px; color: var(--ink-soft); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; margin: 10px 0 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--grid-line); }
+.sw.in, td.in { background: var(--cell-in); }
+.sw.mid, td.mid { background: var(--cell-mid); }
+.sw.out, td.out { background: var(--cell-out); }
+.sw.na, td.na { background: repeating-linear-gradient(135deg, var(--cell-na) 0 4px, var(--surface) 4px 8px); }
+
+figure.sheet { margin: 18px 0 28px; }
+figure.sheet .tbl { margin: 0; border-radius: 6px 6px 6px 0; }
+table.grid { font: 12px/1.35 var(--font-mono); width: auto; min-width: 100%; }
+table.grid th, table.grid td { border: 1px solid var(--grid-line); padding: 5px 8px; min-width: 112px; color: var(--cell-ink); }
+table.grid thead th { text-align: center; font: 500 11.5px/1 var(--font-body); letter-spacing: 0; text-transform: none; padding: 5px; color: var(--ink-soft); }
+table.grid th.rn { min-width: 0; width: 1%; white-space: nowrap; text-align: right; background: var(--grid-head); color: var(--ink-soft); font: 500 11.5px/1.35 var(--font-body); }
+table.grid td.lab { font-family: var(--font-body); color: var(--ink); background: var(--surface); }
+table.grid td.hd { font: 600 11.5px/1.3 var(--font-body); background: var(--surface); color: var(--ink); }
+table.grid td { background: var(--surface); }
+table.grid .v { display: block; font-variant-numeric: tabular-nums; }
+table.grid .to { display: block; font: 500 11px/1.3 var(--font-body); color: var(--accent); margin-top: 2px; }
+td.in .to, td.mid .to, td.na .to { color: var(--ink-soft); }
+figcaption { display: flex; }
+.sheettab { font: 600 12.5px/1 var(--font-body); padding: 7px 14px 8px; background: var(--surface); border: 1px solid var(--rule); border-top: 0; border-bottom: 3px solid var(--accent); border-radius: 0 0 6px 6px; }
+
+footer { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 18px; font-size: 13px; color: var(--ink-soft); }
+footer p { max-width: 90ch; margin: 0 0 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+<header class="top">
+<p class="eyebrow">EIOPA risk-free rate in Python</p>
+<h1>Inputs, calculation and outputs</h1>
+<p class="lead">The code reads up to four CSV files, calculates the Solvency II basic risk-free interest rate term
+structure with EIOPA's constant-forward method, optionally adds the volatility adjustment and the interest rate shocks,
+and writes up to six CSV files. EIOPA's Excel workbook calculates the same results; this page shows the cell for each one.</p>
+<p class="meta"><span>Workbook: <em>RFR extrapolation and VA calculation</em>, 19 May 2026</span>
+<span>Method: <em>RFR Technical Documentation</em>, EIOPA-BoS-26/198</span>
+<span><a href="https://github.com/open-source-modelling/EIOPA_constant_forward_methodology">Repository on GitHub</a></span></p>
+</header>
+
+<nav class="toc" aria-label="Contents">
+<p>Contents</p>
+<ul>
+<li><a href="#overview">At a glance</a></li>
+<li><a href="#inputs">Inputs</a>
+<ul><li><a href="#in-parameters">parameters.csv</a></li><li><a href="#in-curve">curve.csv</a></li><li><a href="#in-va">va_parameters.csv</a></li><li><a href="#in-irr">irr_parameters.csv</a></li></ul></li>
+<li><a href="#method">What the code does</a></li>
+<li><a href="#outputs">Outputs</a>
+<ul><li><a href="#out-curves">_curves</a></li><li><a href="#out-parameters">_parameters</a></li><li><a href="#out-va-curves">_va_curves</a></li><li><a href="#out-va-parameters">_va_parameters</a></li><li><a href="#out-irr-curves">_irr_curves</a></li><li><a href="#out-irr-parameters">_irr_parameters</a></li></ul></li>
+<li><a href="#excel">Find the results in Excel</a></li>
+<li><a href="#differences">Where the code and Excel differ</a></li>
+</ul>
+</nav>
+
+<main>
+
+<section id="overview">
+<h2>At a glance</h2>
+<p>A run has up to three steps. The first always runs; each of the other two runs only when its input file is there.</p>
+<div class="flow" role="table" aria-label="Steps of a run">
+<div class="flow-head" role="row"><span role="columnheader">Step</span><span role="columnheader">Reads</span><span role="columnheader">Calculates</span><span role="columnheader">Writes</span><span role="columnheader">Workbook sheets</span></div>
+<div class="flow-row" role="row">
+<span class="n" role="cell">1</span>
+<span role="cell"><code class="file">curve.csv</code><code class="file">parameters.csv</code></span>
+<span role="cell" class="txt"><b>Basic risk-free rate</b>: bootstrapping, LLFR, extrapolation to the UFR</span>
+<span role="cell"><code class="file">&lt;prefix&gt;_curves.csv</code><code class="file">&lt;prefix&gt;_parameters.csv</code></span>
+<span role="cell"><span class="tab">Input Data &amp; Extrapolation</span></span>
+</div>
+<div class="flow-row" role="row">
+<span class="n" role="cell">2</span>
+<span role="cell"><code class="file">va_parameters.csv</code><span class="badge opt">optional</span></span>
+<span role="cell" class="txt"><b>Volatility adjustment</b>: CSSR curve, CSSR, VA and the curve with VA</span>
+<span role="cell"><code class="file">&lt;prefix&gt;_va_curves.csv</code><code class="file">&lt;prefix&gt;_va_parameters.csv</code></span>
+<span role="cell"><span class="tab">CSSR Calculation</span> <span class="tab">VA Term Structures</span></span>
+</div>
+<div class="flow-row" role="row">
+<span class="n" role="cell">3</span>
+<span role="cell"><code class="file">irr_parameters.csv</code><span class="badge opt">optional</span></span>
+<span role="cell" class="txt"><b>Interest rate shocks</b>: curves after the upward and downward shocks, without and with VA</span>
+<span role="cell"><code class="file">&lt;prefix&gt;_irr_curves.csv</code><code class="file">&lt;prefix&gt;_irr_parameters.csv</code></span>
+<span role="cell"><span class="tab">IRR Up Shock</span> <span class="tab">IRR Down Shock</span></span>
+</div>
+</div>
+
+<div class="run">
+<div>
+<p class="check-title">Run the scripts</p>
+<pre class="cmd"><code>python Code/main.py</code></pre>
+<p>Reads <code class="path">Input/</code> and writes <code class="path">Output/</code>, which is deleted at the start of
+every run so it only holds the latest results.</p>
+</div>
+<div>
+<p class="check-title">Run the package</p>
+<pre class="cmd"><code>eiopa-rfr --input Input --output Output</code></pre>
+<p>The same calculation after <code>pip install eiopa-rfr</code>. It deletes only result files of an earlier run from
+the output folder, so other files there are kept.</p>
+</div>
+</div>
+<p>Both print a summary (FSP, LLFR, VA and the curves at selected maturities) and the path of every file written.</p>
+</section>
+
+
+<section id="inputs">
+<h2>Inputs</h2>
+<p>All inputs are CSV files in one folder: <code class="path">Input/</code> for <code>python Code/main.py</code>,
+or the folder given with <code>--input</code> to the <code>eiopa-rfr</code> command. Two files are always needed;
+the other two switch on the volatility adjustment and the interest rate shocks.</p>
+
+<div class="facts">
+  <div><span class="k">Separator</span><span><code>,</code> or <code>;</code></span></div>
+  <div><span class="k">Decimal mark</span><span><code>.</code> or <code>,</code> (European Excel settings work)</span></div>
+  <div><span class="k">Rates</span><span>decimals: <code>0.033</code> is 3.3%</span></div>
+  <div><span class="k">CRA</span><span>basis points: <code>10</code> is 0.10%</span></div>
+  <div><span class="k">Maturities</span><span>whole years, 1 to <code>Max Maturity</code></span></div>
+</div>
+
+<h3 id="in-parameters"><code class="file">parameters.csv</code> <span class="badge req">required</span></h3>
+<p>The curve settings. Columns <code>Parameter, Value</code>, one row per setting. Row order and capitals in the names do not matter.</p>
+<div class="tbl"><table class=""><thead><tr><th>Parameter</th><th>Meaning</th><th>Format</th><th>Needed</th><th>Excel cell</th></tr></thead><tbody><tr><td><code>Instrument</code></td><td>Type of the input rates</td><td><code>SWP</code> (swaps) or <code>GVT</code> (government bonds)</td><td>always</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.INSTRUMENT</code></span></td></tr><tr><td><code>Coupon Frequency</code></td><td>Coupon payments per year of the swaps</td><td>whole number ≥ 1</td><td>swaps only</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H12</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.COUPON_FREQ</code></span></td></tr><tr><td><code>UFR</code></td><td>Ultimate forward rate, annually compounded</td><td>decimal, e.g. <code>0.033</code></td><td>always</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H14</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.UFR</code></span></td></tr><tr><td><code>Convergence</code></td><td>Convergence parameter α: how fast the forward rates move from the LLFR to the UFR (11%; 40% for the Swedish krona)</td><td>decimal &gt; 0, e.g. <code>0.11</code></td><td>always</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H15</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.ALPHA</code></span></td></tr><tr><td><code>CRA</code></td><td>Credit risk adjustment, deducted from every input rate</td><td>basis points, e.g. <code>10</code></td><td>always</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H16</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.CRA</code></span></td></tr><tr><td><code>Max Maturity</code></td><td>Longest maturity of the curves</td><td>whole years ≥ 1, e.g. <code>150</code></td><td>always</td><td><span class="muted">no cell: the sheets always have 150 rows</span></td></tr></tbody></table></div>
+<pre class="csv"><code>Parameter,Value
+Instrument,GVT
+Coupon Frequency,1
+UFR,0.033
+Convergence,0.11
+CRA,10
+Max Maturity,150</code></pre>
+
+<h3 id="in-curve"><code class="file">curve.csv</code> <span class="badge req">required</span></h3>
+<p>The market rates and EIOPA's DLT assessment, one row per maturity. These are columns G to J of the table on
+<span class="tab">Input Data &amp; Extrapolation</span>, rows 25 to 174 for maturities 1 to 150.</p>
+<div class="tbl"><table class=""><thead><tr><th>Column</th><th>Meaning</th><th>Format</th><th>Excel column</th></tr></thead><tbody><tr><td><code>Maturity</code></td><td>Maturity in years</td><td>1 to <code>Max Maturity</code></td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">G25:G174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.MATURITY</code></span></td></tr><tr><td><code>DLT</code></td><td>1 if the maturity is deep, liquid and transparent, so its rate is used</td><td><code>0</code> or <code>1</code>; empty is 0</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H25:H174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.DLT</code></span></td></tr><tr><td><code>LLFR Weight</code></td><td>Weight of the maturity in the last liquid forward rate. The first maturity with a positive weight is the first smoothing point (FSP)</td><td>decimal; empty is 0; the weights sum to 1</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">I25:I174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.LLFR_WEIGHTS</code></span></td></tr><tr><td><code>Input Rate</code></td><td>Market rate before the CRA: the par swap rate (<code>SWP</code>) or the annually compounded zero rate (<code>GVT</code>)</td><td>decimal; may be empty</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">J25:J174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BASECURVE</code></span></td></tr></tbody></table></div>
+<pre class="csv"><code>Maturity,DLT,LLFR Weight,Input Rate
+1,1,0,0.02176
+...
+19,0,0,0.032272
+20,1,0.33,0.03233
+...</code></pre>
+<p>Rates at maturities with DLT 0 are ignored, and so is a DLT maturity without a rate. A maturity missing from the
+file counts as DLT 0, weight 0 and no rate.</p>
+
+<h3 id="in-va"><code class="file">va_parameters.csv</code> <span class="badge opt">optional</span></h3>
+<p>Switches on the volatility adjustment (VA). Columns <code>Parameter, Value</code>, like <code>parameters.csv</code>.
+Only <code>Currency RCS</code> is required; an empty value counts as missing.</p>
+<div class="tbl"><table class=""><thead><tr><th>Parameter</th><th>Meaning</th><th>Format</th><th>Needed</th><th>Excel cell</th></tr></thead><tbody><tr><td><code>Currency RCS</code></td><td>Risk-corrected currency spread, published by EIOPA</td><td>decimal, <code>0.01</code> = 100 bp</td><td>always</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L10</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.RCS_CU</code></span></td></tr><tr><td><code>Country RCS</code></td><td>Risk-corrected country spread, published by EIOPA</td><td>decimal</td><td>macro VA</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.RCS_CO</code></span></td></tr><tr><td><code>Debt to Total Assets</code></td><td>Debt-to-total-assets ratio of the country, published by EIOPA</td><td>decimal, 0 to 1</td><td>macro VA</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L12</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.DTTA</code></span></td></tr><tr><td><code>Use Macro VA</code></td><td>1 to add the macro VA of the country</td><td><code>0</code> or <code>1</code>; empty is 0</td><td>no</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">H10</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.MACROVA_SELECTED</code></span><span class="note">Excel: TRUE / FALSE</span></td></tr><tr><td><code>USA</code></td><td>Undertaking-specific adjustment of the currency RCS; leave empty if not used</td><td>decimal, at most <code>1.05</code></td><td>no</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">H12</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.USA</code></span><span class="note">with <code>USA?</code> in H11 set to TRUE; empty = FALSE</span></td></tr><tr><td><code>MV Fixed Income</code></td><td>Your fixed income assets valued on the basic risk-free rate</td><td>amount</td><td>for the CSSR</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L10</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.MVFI</code></span></td></tr><tr><td><code>MV Fixed Income CSSR Curve</code></td><td>The same assets valued on the CSSR curve</td><td>amount</td><td>for the CSSR</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.MVFI_NOTIONAL</code></span></td></tr><tr><td><code>BEL</code></td><td>Your best estimate liabilities valued on the basic risk-free rate</td><td>amount</td><td>for the CSSR</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L13</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.BEL</code></span></td></tr><tr><td><code>BEL CSSR Curve</code></td><td>The same liabilities valued on the CSSR curve</td><td>amount</td><td>for the CSSR</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L14</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.BEL_NOTIONAL</code></span></td></tr></tbody></table></div>
+<div class="aside">
+<p class="aside-title">The VA takes two runs</p>
+<ol>
+<li>Fill in the spreads and settings and leave the four amounts empty. The run writes the CSSR curve
+(<code>&lt;prefix&gt;_va_curves.csv</code>, column <code>CSSR Curve</code>) and reports <code>CSSR : not calculated</code>.</li>
+<li>Value your fixed income assets and best estimate on the basic risk-free rate and on the CSSR curve, enter the four
+amounts and run again. The run now calculates the CSSR, the VA and the curve with VA.</li>
+</ol>
+</div>
+
+<h3 id="in-irr"><code class="file">irr_parameters.csv</code> <span class="badge opt">optional</span></h3>
+<p>Switches on the interest rate risk shocks of the standard formula. One row per maturity, covering every maturity
+from 1 to <code>Max Maturity</code>; rows beyond it are not used. This is the table on the sheet <span class="tab">Parameters</span>, rows 17 to
+166. <code class="path">Examples/EIOPA_Example/Input/irr_parameters.csv</code> holds the workbook's table at full
+precision, including the values the workbook interpolates.</p>
+<div class="tbl"><table class=""><thead><tr><th>Column</th><th>Meaning</th><th>Format</th><th>Excel column</th></tr></thead><tbody><tr><td><code>Maturity</code></td><td>Maturity in years</td><td>1, 2, 3, …</td><td><span class="where"><span class="tab">Parameters</span> <code class="ref">G17:G166</code></span></td></tr><tr><td><code>smup</code></td><td>Relative upward shock</td><td>decimal, 0 to 1, e.g. <code>0.61</code></td><td><span class="where"><span class="tab">Parameters</span> <code class="ref">H17:H166</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.IRR_SM_UP</code></span></td></tr><tr><td><code>bmup</code></td><td>Absolute upward shock</td><td>decimal, 0 to 1, e.g. <code>0.0214</code></td><td><span class="where"><span class="tab">Parameters</span> <code class="ref">I17:I166</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.IRR_BM_UP</code></span></td></tr><tr><td><code>smdown</code></td><td>Relative downward shock</td><td>decimal, 0 to 1, e.g. <code>0.58</code></td><td><span class="where"><span class="tab">Parameters</span> <code class="ref">J17:J166</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.IRR_SM_DOWN</code></span></td></tr><tr><td><code>bmdown</code></td><td>Absolute downward shock</td><td>decimal, 0 to 1, e.g. <code>0.0116</code></td><td><span class="where"><span class="tab">Parameters</span> <code class="ref">K17:K166</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.IRR_BM_DOWN</code></span></td></tr><tr><td><code>rmfloor</code></td><td>Floor of the rates after the downward shock</td><td>decimal, e.g. <code>-0.0125</code></td><td><span class="where"><span class="tab">Parameters</span> <code class="ref">L17:L166</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.RM_FLOOR</code></span></td></tr></tbody></table></div>
+
+<h3 id="checks">Checks before anything is calculated</h3>
+<p>Each file is checked in full and every problem is listed at once, for example
+<code>Input error: invalid inputs: - UFR must be a decimal, e.g. 0.033 for 3.3% (is 3.3)</code>.</p>
+<div class="checks">
+<div>
+<p class="check-title"><code>parameters.csv</code> and <code>curve.csv</code></p>
+<ul>
+<li><code>Instrument</code> is <code>SWP</code> or <code>GVT</code>; swaps have a <code>Coupon Frequency</code> of at least 1.</li>
+<li><code>Convergence</code> is positive; <code>UFR</code> and every rate lie between −1 and 1.</li>
+<li>No DLT flag, weight or rate lies beyond <code>Max Maturity</code>.</li>
+<li>At least one maturity has DLT 1 and a rate.</li>
+<li>LLFR weights are not negative, sum to 1, and sit only on DLT maturities with a rate.</li>
+<li>A DLT maturity with a rate comes before the FSP.</li>
+</ul>
+</div>
+<div>
+<p class="check-title"><code>va_parameters.csv</code></p>
+<ul>
+<li>The spreads lie between −1 and 1.</li>
+<li>The four amounts are given all together or not at all.</li>
+<li>With the amounts, the notional VA is not 0.</li>
+<li>The macro VA has the country RCS and a debt-to-total-assets ratio between 0 and 1.</li>
+<li>The USA is at most 1.05 and is not combined with the macro VA.</li>
+</ul>
+</div>
+<div>
+<p class="check-title"><code>irr_parameters.csv</code></p>
+<ul>
+<li>Every maturity up to <code>Max Maturity</code> has all five values.</li>
+<li>Relative shocks lie between 0 and 1, absolute shocks between 0 and 1 (1 excluded).</li>
+<li>The floor lies between −1 and 1.</li>
+</ul>
+</div>
+</div>
+<p>Invalid curve inputs stop the run before anything is written. Invalid VA inputs stop it after the basic risk-free
+rate is saved; invalid shock parameters after the VA is saved.</p>
+
+<h3 id="sources">Where the inputs come from</h3>
+<div class="tbl"><table class=""><thead><tr><th>Input</th><th>Source</th></tr></thead><tbody><tr><td>DLT flags, LLFR weights, UFR, CRA, convergence</td><td>EIOPA's monthly risk-free rate publication and technical documentation</td></tr><tr><td>Input rates</td><td>Market swap rates or government bond zero rates at the reference date</td></tr><tr><td>Currency RCS, country RCS, debt-to-total-assets ratio</td><td>EIOPA's monthly publication for the VA</td></tr><tr><td>The four amounts for the CSSR, the USA</td><td>Your own valuation models and bond portfolio</td></tr><tr><td>Shock parameters</td><td>Standard formula, as on the workbook's sheet <em>Parameters</em></td></tr></tbody></table></div>
+</section>
+
+
+<section id="method">
+<h2>What the code does</h2>
+<p>The calculation follows EIOPA's <em>RFR Technical Documentation</em> (EIOPA-BoS-26/198, May 2026) and is a
+line-by-line port of the workbook's VBA and worksheet formulas. <i>t</i> is a maturity in years, the superscript
+<i>c</i> marks a continuously compounded rate, <i>t</i><sub>F</sub> is the FSP.</p>
+<ol class="steps">
+<li>
+<h3>Read and check the inputs</h3>
+<p>Every file is read and checked before anything is calculated (see <a href="#checks">Checks</a>).</p>
+</li>
+<li>
+<h3>Bootstrap the zero curve <span class="cite">§8.5.2, Annex D</span></h3>
+<p><b>Swaps.</b> Each DLT swap is priced at par with its rate reduced by the CRA. Between DLT maturities the
+periodic forward rate is constant, and each new forward is solved with Newton–Raphson:</p>
+<p class="formula">(s<sub>t</sub> − CRA) / m · Σ<sub>j=1…m·t</sub> d<sub>j/m</sub> + d<sub>t</sub> = 1</p>
+<p><b>Government bonds.</b> The rates are already zero rates. After the CRA they are converted to continuous
+compounding and the forward rate is constant between DLT maturities:</p>
+<p class="formula">z<sup>c</sup><sub>t</sub> = ln(1 + r<sub>t</sub> − CRA)</p>
+<p>The result is a zero rate for every year up to the last DLT maturity.</p>
+<p class="xl">In Excel: <span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">K25:K174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BOOTSTRAPPED_CURVE</code></span> (VBA <code>BootstrapCurve</code>)</p>
+</li>
+<li>
+<h3>Calculate the last liquid forward rate <span class="cite">§8.3, §8.5.6</span></h3>
+<p>A weighted average of the forward rate into the FSP and the forward rates from the FSP to each later DLT maturity:</p>
+<p class="formula">LLFR<sup>c</sup> = w<sub>F</sub> · f<sup>c</sup>(t<sub>F</sub> − 1, t<sub>F</sub>) + Σ<sub>k&gt;F</sub> w<sub>k</sub> · f<sup>c</sup>(t<sub>F</sub>, t<sub>k</sub>)</p>
+<p class="xl">In Excel: <span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L22</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR</code></span> (VBA <code>GetLLFR</code>); the FSP in <span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H13</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.FSP</code></span></p>
+</li>
+<li>
+<h3>Extrapolate to the UFR <span class="cite">§8.5.5–§8.5.8</span></h3>
+<p>After the FSP the forward rate starts at the LLFR and converges to the UFR; a larger α converges faster:</p>
+<p class="formula">f<sup>c</sup>(t<sub>F</sub>, t<sub>F</sub> + h) = ln(1 + UFR) + (LLFR<sup>c</sup> − ln(1 + UFR)) · (1 − e<sup>−αh</sup>) / (αh)</p>
+<p>Up to the FSP the curve is the bootstrapped curve. The zero rates are converted to annual compounding and rounded
+to 5 decimals: this is the <b>basic risk-free rate</b>.</p>
+<p class="xl">In Excel: <span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L25:L174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BASIC_RFR</code></span> (VBA <code>Extrapolation</code>)</p>
+</li>
+<li>
+<h3>Volatility adjustment <span class="cite">§9.3, §9.4, §10</span> <span class="badge opt">with va_parameters.csv</span></h3>
+<p>The <b>CSSR curve</b> is the basic risk-free rate with a notional VA of 85% of the currency RCS (rounded to whole
+basis points) added to its one-year forwards. Your two valuations on it give the credit spread sensitivity ratio:</p>
+<p class="formula">PVBP<sub>FI</sub> = (FI<sub>MV</sub> − FI<sub>CSSR</sub>) / notional VA, &nbsp; PVBP<sub>BEL</sub> = (BEL<sub>MV</sub> − BEL<sub>CSSR</sub>) / notional VA<br>
+CSSR = max(min(PVBP<sub>FI</sub> / PVBP<sub>BEL</sub>, 1), 0), and 1 if PVBP<sub>BEL</sub> ≤ 0</p>
+<p>The currency VA is 85% · CSSR · RCS<sub>cu</sub>, times the USA if given. With the macro VA, euro area
+undertakings add 85% · CSSR · max(RCS<sub>co</sub> − 1.3 · RCS<sub>cu</sub>, 0) · ω<sub>co</sub>. The total VA is
+rounded to whole basis points and added to the one-year forwards; the LLFR rises by w<sub>F</sub> · ln(1 + VA).</p>
+<p class="xl">In Excel: sheets <span class="tab">CSSR Calculation</span> and <span class="tab">VA Term Structures</span></p>
+</li>
+<li>
+<h3>Interest rate shocks <span class="cite">workbook sheets</span> <span class="badge opt">with irr_parameters.csv</span></h3>
+<p>The bootstrapped zero rates after the CRA, annually compounded, are shocked for every maturity up to the last DLT
+maturity:</p>
+<p class="formula">r<sup>up</sup><sub>t</sub> = r<sub>t</sub> · (1 + s<sup>up</sup><sub>t</sub>) + b<sup>up</sup><sub>t</sub>, &nbsp; r<sup>down</sup><sub>t</sub> = r<sub>t</sub> · (1 − s<sup>down</sup><sub>t</sub>) − b<sup>down</sup><sub>t</sub></p>
+<p>Each shocked curve gets its own LLFR and is extrapolated as in step 4 with the UFR shifted by 15 basis points
+(UFR + 0.15% up, UFR − 0.15% down), then rounded to 5 decimals. The downward curve is raised to the floor
+of each maturity. With a total VA from step 5, both are also calculated with that VA.</p>
+<p class="xl">In Excel: sheets <span class="tab">IRR Up Shock</span> and <span class="tab">IRR Down Shock</span></p>
+</li>
+</ol>
+</section>
+
+
+<section id="outputs">
+<h2>Outputs</h2>
+<p>Results are CSV files in <code class="path">Output/</code> (or the <code>--output</code> folder), named after the
+instrument: <code>swaps_*.csv</code> for <code>SWP</code> and <code>government_bonds_*.csv</code> for <code>GVT</code>.
+Below, <code>&lt;prefix&gt;</code> stands for either. Rates are decimals at full precision; an empty cell is Excel's
+<code>#N/A</code>. The example values are those of EIOPA's example in <code class="path">Input/</code> (government bonds, with
+VA and shocks), shortened here.</p>
+
+<h3 id="out-curves"><code class="file">&lt;prefix&gt;_curves.csv</code> <span class="badge req">always</span></h3>
+<p>One row per maturity 1 to <code>Max Maturity</code>. The first four columns repeat the inputs.</p>
+<div class="tbl"><table class="out"><thead><tr><th>Column</th><th>Meaning</th><th>Excel</th><th>Example at 20 years</th></tr></thead><tbody><tr><td><code>Maturity</code></td><td>Maturity in years</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">G25:G174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.MATURITY</code></span></td><td>20</td></tr><tr><td><code>DLT</code></td><td>DLT flag from the input</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H25:H174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.DLT</code></span></td><td>1</td></tr><tr><td><code>LLFR Weight</code></td><td>LLFR weight from the input</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">I25:I174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.LLFR_WEIGHTS</code></span></td><td>0.33</td></tr><tr><td><code>Input Rate</code></td><td>Input rate; empty where there is none</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">J25:J174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BASECURVE</code></span></td><td>0.03233</td></tr><tr><td><code>Bootstrapped Zero Rate CC</code></td><td>Zero rate after the CRA, continuously compounded, up to the last DLT maturity; empty after it</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">K25:K174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BOOTSTRAPPED_CURVE</code></span></td><td>0.0308492314</td></tr><tr><td><code>Basic RFR</code></td><td><b>Basic risk-free interest rate term structure</b>, annually compounded, rounded to 5 decimals</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L25:L174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BASIC_RFR</code></span></td><td>0.03133</td></tr></tbody></table></div>
+
+<h3 id="out-parameters"><code class="file">&lt;prefix&gt;_parameters.csv</code> <span class="badge req">always</span></h3>
+<p>Columns <code>Parameter, Value</code>: the settings used, the FSP and the LLFR.</p>
+<div class="tbl"><table class="out"><thead><tr><th>Parameter</th><th>Meaning</th><th>Excel</th><th>Example</th></tr></thead><tbody><tr><td><code>Instrument</code></td><td><code>SWP</code> or <code>GVT</code></td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.INSTRUMENT</code></span></td><td>GVT</td></tr><tr><td><code>Coupon Frequency</code></td><td>Coupon payments per year; swaps only</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H12</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.COUPON_FREQ</code></span></td><td><span class="muted">not written for GVT</span></td></tr><tr><td><code>FSP</code></td><td>First smoothing point in years: the first maturity with a positive LLFR weight</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H13</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.FSP</code></span></td><td>20</td></tr><tr><td><code>UFR</code></td><td>Ultimate forward rate used</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H14</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.UFR</code></span></td><td>0.033</td></tr><tr><td><code>Convergence</code></td><td>α used</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H15</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.ALPHA</code></span></td><td>0.11</td></tr><tr><td><code>CRA</code></td><td>Credit risk adjustment used, in basis points</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">H16</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.CRA</code></span></td><td>10</td></tr><tr><td><code>Max Maturity</code></td><td>Longest maturity of the curves</td><td><span class="muted">no cell (150 rows)</span></td><td>150</td></tr><tr><td><code>LLFR (CC)</code></td><td><b>Last liquid forward rate</b>, continuously compounded</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L22</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR</code></span></td><td>0.031883028</td></tr></tbody></table></div>
+
+<h3 id="out-va-curves"><code class="file">&lt;prefix&gt;_va_curves.csv</code> <span class="badge opt">with va_parameters.csv</span></h3>
+<p>One row per maturity, annually compounded, rounded to 5 decimals.</p>
+<div class="tbl"><table class="out"><thead><tr><th>Column</th><th>Meaning</th><th>Excel</th><th>Example at 20 years</th></tr></thead><tbody><tr><td><code>Maturity</code></td><td>Maturity in years</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">G24:G173</code></span></td><td>20</td></tr><tr><td><code>Basic RFR</code></td><td>Basic risk-free rate, repeated</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">H24:H173</code></span></td><td>0.03133</td></tr><tr><td><code>CSSR Curve</code></td><td>Curve with the notional VA, on which you value assets and liabilities for the CSSR</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L24:L173</code></span></td><td>0.0401</td></tr><tr><td><code>VA Curve</code></td><td><b>Risk-free rate with the total VA</b>; empty until the CSSR can be calculated</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">L23:L172</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.VA_CURVE</code></span></td><td>0.03484</td></tr></tbody></table></div>
+
+<h3 id="out-va-parameters"><code class="file">&lt;prefix&gt;_va_parameters.csv</code> <span class="badge opt">with va_parameters.csv</span></h3>
+<p>Columns <code>Parameter, Value</code>: the VA inputs and the calculated values, in the order of the workbook.
+Values not yet available are empty.</p>
+<div class="tbl"><table class="out"><thead><tr><th>Parameter</th><th>Meaning</th><th>Excel</th><th>Example</th></tr></thead><tbody><tr><td><code>Currency RCS</code>, <code>Country RCS</code>, <code>Debt to Total Assets</code></td><td>The inputs</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L10:L12</code></span></td><td>0.01, 0.014, 0.5</td></tr><tr><td><code>Notional VA</code></td><td>85% of the currency RCS, rounded to whole basis points</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">H10</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.NOTIONAL_VA</code></span></td><td>0.0085</td></tr><tr><td><code>MV Fixed Income</code>, <code>MV Fixed Income CSSR Curve</code></td><td>The inputs</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L10:L11</code></span></td><td>500000, 490000</td></tr><tr><td><code>PVBP MV Fixed Income</code></td><td>Change in value of the assets on the CSSR curve, divided by the notional VA</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L12</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.PVBP_MVFI</code></span></td><td>1176470.5882</td></tr><tr><td><code>BEL</code>, <code>BEL CSSR Curve</code></td><td>The inputs</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L13:L14</code></span></td><td>870000, 850000</td></tr><tr><td><code>PVBP BEL</code></td><td>Change in value of the best estimate on the CSSR curve, divided by the notional VA</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L15</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.PVBP_BEL</code></span></td><td>2352941.1765</td></tr><tr><td><code>CSSR</code></td><td><b>Credit spread sensitivity ratio</b></td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">L16</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.CSSR</code></span></td><td>0.5</td></tr><tr><td><code>Notional VA LLFR (CC)</code></td><td>LLFR of the CSSR curve, continuously compounded</td><td><span class="where"><span class="tab">CSSR Calculation</span> <code class="ref">K20</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.NOTIONAL_VA_LLFR</code></span></td><td>0.0346761739</td></tr><tr><td><code>Use Macro VA</code>, <code>USA</code></td><td>The inputs</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">H10:H12</code></span></td><td>0, 0.8</td></tr><tr><td><code>Currency VA</code></td><td>Currency VA, with the USA if given</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">L10</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.CURRENCY_VA</code></span></td><td>0.0034</td></tr><tr><td><code>Country Adjustment Factor</code></td><td>ω<sub>co</sub> of the macro VA; empty without the country values</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">L11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.W_CO</code></span></td><td>0.3333333333</td></tr><tr><td><code>Macro VA</code></td><td>Macro VA; empty if not used</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">L12</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.MACRO_VA</code></span></td><td><span class="muted">empty (#N/A)</span></td></tr><tr><td><code>Total VA</code></td><td><b>Total VA</b>, rounded to whole basis points</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">L13</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.TOTAL_VA</code></span></td><td>0.0034</td></tr><tr><td><code>Total VA LLFR (CC)</code></td><td>LLFR of the curve with VA, continuously compounded</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">K20</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.TOTAL_VA_LLFR</code></span></td><td>0.0330031249</td></tr></tbody></table></div>
+
+<h3 id="out-irr-curves"><code class="file">&lt;prefix&gt;_irr_curves.csv</code> <span class="badge opt">with irr_parameters.csv</span></h3>
+<p>One row per maturity, annually compounded. Shocked rates exist up to the last DLT maturity, the shocked curves for
+every maturity.</p>
+<div class="tbl"><table class="out"><thead><tr><th>Column</th><th>Meaning</th><th>Excel</th><th>Example at 20 years</th></tr></thead><tbody><tr><td><code>Maturity</code></td><td>Maturity in years</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">G22:G171</code></span></td><td>20</td></tr><tr><td><code>Basic RFR</code></td><td>Basic risk-free rate, repeated</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L25:L174</code> <code class="nm" title="Named range: type it in Excel's Name Box">R.BASIC_RFR</code></span></td><td>0.03133</td></tr><tr><td><code>Bootstrapped Zero Rate AC</code></td><td>Zero rate after the CRA, annually compounded; empty after the last DLT maturity</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">I22:I171</code></span><span class="note">same column on IRR Down Shock</span></td><td>0.03133</td></tr><tr><td><code>IRR Shock Up AC</code></td><td>Bootstrapped rate after the upward shock</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">J22:J171</code></span></td><td>0.0479625</td></tr><tr><td><code>IRR Up RFR</code></td><td><b>Curve after the upward shock</b>, rounded to 5 decimals</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">L22:L171</code></span></td><td>0.04796</td></tr><tr><td><code>IRR Up with VA</code></td><td>The same with the total VA; empty without a VA</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">O22:O171</code></span></td><td>0.05153</td></tr><tr><td><code>IRR Shock Down AC</code></td><td>Bootstrapped rate after the downward shock</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">J22:J171</code></span></td><td>0.010665</td></tr><tr><td><code>IRR Down RFR</code></td><td><b>Curve after the downward shock</b>, rounded to 5 decimals, at least the floor</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">L22:L171</code></span></td><td>0.01067</td></tr><tr><td><code>IRR Down with VA</code></td><td>The same with the total VA; empty without a VA</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">O22:O171</code></span></td><td>0.0141</td></tr></tbody></table></div>
+
+<h3 id="out-irr-parameters"><code class="file">&lt;prefix&gt;_irr_parameters.csv</code> <span class="badge opt">with irr_parameters.csv</span></h3>
+<p>Columns <code>Parameter, Value</code>. Values that need a VA are empty without one.</p>
+<div class="tbl"><table class="out"><thead><tr><th>Parameter</th><th>Meaning</th><th>Excel</th><th>Example</th></tr></thead><tbody><tr><td><code>UFR Up</code></td><td>UFR + 0.15%</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">H11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.UFR_UP</code></span></td><td>0.0345</td></tr><tr><td><code>VA</code></td><td>Total VA used for the curves with VA</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">H12</code></span><span class="note">also IRR Down Shock H12</span></td><td>0.0034</td></tr><tr><td><code>LLFR IRR Up (CC)</code></td><td>LLFR of the upward shocked rates</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">L19</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR_IRR_UP</code></span></td><td>0.0400808333</td></tr><tr><td><code>LLFR* IRR Up (CC)</code></td><td>The same with the VA</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">O19</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR_STAR_IRR_UP</code></span></td><td>0.0412009302</td></tr><tr><td><code>UFR Down</code></td><td>UFR − 0.15%</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">H11</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.UFR_DOWN</code></span></td><td>0.0315</td></tr><tr><td><code>LLFR IRR Down (CC)</code></td><td>LLFR of the downward shocked rates</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">K19</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR_IRR_DOWN</code></span><span class="note">one column left of the up sheet</span></td><td>0.0099936036</td></tr><tr><td><code>LLFR* IRR Down (CC)</code></td><td>The same with the VA</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">N19</code> <code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR_STAR_IRR_DOWN</code></span></td><td>0.0111137005</td></tr></tbody></table></div>
+</section>
+
+
+<section id="excel">
+<h2>Find the results in Excel</h2>
+<p>Every output is also calculated by EIOPA's demonstration workbook, kept in the repository as
+<code class="path">Sources/RFR extrapolation and VA calculation (19 May 2026).xlsm</code>. With the same inputs the
+two agree exactly: this was checked for every value above, at all 150 maturities.</p>
+
+<div class="howto">
+<div>
+<p class="check-title">Open the workbook</p>
+<p>Enable macros: the curves come from the VBA functions <code>BootstrapCurve</code>, <code>GetLLFR</code> and
+<code>Extrapolation</code>, and show <code>#NAME?</code> without them. The sheets use <code>LET</code>,
+<code>FILTER</code>, <code>XMATCH</code>, <code>BYROW</code>, <code>LAMBDA</code> and <code>HSTACK</code>, so they need
+Excel for Microsoft 365 or Excel 2024.</p>
+</div>
+<div>
+<p class="check-title">Give it the same inputs</p>
+<p>Enter the values of your input files in the cells listed under <a href="#inputs">Inputs</a>, and keep
+<code>Extrapolation?</code> in <code class="ref">H10</code> at TRUE. The workbook in the repository is saved with the inputs of
+<code class="path">Input/</code>, so <code class="path">Output/</code> matches it as it opens.</p>
+</div>
+<div>
+<p class="check-title">Jump with the Name Box</p>
+<p>Most results have a workbook name. Type it in the Name Box, left of the formula bar, and press Enter:
+<code class="nm" title="Named range: type it in Excel's Name Box">V.LLFR</code> selects <code class="ref">L22</code> on <span class="tab">Input Data &amp; Extrapolation</span>, <code class="nm" title="Named range: type it in Excel's Name Box">R.BASIC_RFR</code> the whole basic risk-free rate.</p>
+</div>
+</div>
+
+<h3 id="rows">Maturity <i>t</i> is on row …</h3>
+<p>Each sheet starts its table on a different row, always with maturity 1 and ending with maturity 150.</p>
+<div class="tbl"><table class="rows"><thead><tr><th>Sheet</th><th>Row of maturity <i>t</i></th><th>Maturity 1</th><th>Maturity 20</th><th>Maturity 150</th></tr></thead><tbody><tr><td><span class="tab">Input Data &amp; Extrapolation</span></td><td>24 + <i>t</i></td><td>25</td><td>44</td><td>174</td></tr><tr><td><span class="tab">CSSR Calculation</span></td><td>23 + <i>t</i></td><td>24</td><td>43</td><td>173</td></tr><tr><td><span class="tab">VA Term Structures</span></td><td>22 + <i>t</i></td><td>23</td><td>42</td><td>172</td></tr><tr><td><span class="tab">IRR Up Shock</span> <span class="tab">IRR Down Shock</span></td><td>21 + <i>t</i></td><td>22</td><td>41</td><td>171</td></tr><tr><td><span class="tab">Parameters</span></td><td>16 + <i>t</i></td><td>17</td><td>36</td><td>166</td></tr></tbody></table></div>
+
+<div class="example">
+<p class="check-title">Example: the 20-year rates of EIOPA's example</p>
+<div class="tbl"><table class=""><thead><tr><th>Result file</th><th>Row</th><th>Column</th><th>Value</th><th>Excel cell</th></tr></thead><tbody><tr><td><code>government_bonds_curves.csv</code></td><td><code>Maturity</code> 20</td><td><code>Basic RFR</code></td><td>0.03133</td><td><span class="where"><span class="tab">Input Data &amp; Extrapolation</span> <code class="ref">L44</code></span></td></tr><tr><td><code>government_bonds_va_curves.csv</code></td><td><code>Maturity</code> 20</td><td><code>VA Curve</code></td><td>0.03484</td><td><span class="where"><span class="tab">VA Term Structures</span> <code class="ref">L42</code></span></td></tr><tr><td><code>government_bonds_irr_curves.csv</code></td><td><code>Maturity</code> 20</td><td><code>IRR Up RFR</code></td><td>0.04796</td><td><span class="where"><span class="tab">IRR Up Shock</span> <code class="ref">L41</code></span></td></tr><tr><td><code>government_bonds_irr_curves.csv</code></td><td><code>Maturity</code> 20</td><td><code>IRR Down RFR</code></td><td>0.01067</td><td><span class="where"><span class="tab">IRR Down Shock</span> <code class="ref">L41</code></span></td></tr></tbody></table></div>
+<p class="small">Excel shows these as percentages with fewer decimals; the files hold the full value.</p>
+</div>
+
+<h3 id="maps">Sheet maps</h3>
+<p>Where each result sits on its sheet. Colours follow the workbook's own cell colours; the arrow names the result
+file (without <code>&lt;prefix&gt;_</code>) and its column or parameter. Values are those of EIOPA's example.</p>
+<div class="legend" aria-label="Legend">
+<span><i class="sw in"></i>Input</span><span><i class="sw mid"></i>Intermediate calculation</span>
+<span><i class="sw out"></i>Result written by the code</span><span><i class="sw na"></i>Not used by the code</span>
+</div>
+<figure class="sheet"><div class="tbl"><table class="grid"><thead><tr><th class="rn"></th><th>G</th><th>H</th><th>I</th><th>J</th><th>K</th><th>L</th></tr></thead><tbody><tr><th class="rn">10</th><td class="lab"><span class="v">Extrapolation?</span></td><td class="in"><span class="v">TRUE</span><span class="to">→ must be TRUE</span></td><td class=""></td><td class=""></td><td class="lab"><span class="v">Currency RCS</span></td><td class="in"><span class="v">0.01</span></td></tr><tr><th class="rn">11</th><td class="lab"><span class="v">Instrument Type</span></td><td class="in"><span class="v">GVT</span></td><td class=""></td><td class=""></td><td class="lab"><span class="v">Country RCS</span></td><td class="in"><span class="v">0.014</span></td></tr><tr><th class="rn">12</th><td class="lab"><span class="v">Coupon Frequency</span></td><td class="in"><span class="v">1</span></td><td class=""></td><td class=""></td><td class="lab"><span class="v">Debt to Total Assets</span></td><td class="in"><span class="v">0.5</span></td></tr><tr><th class="rn">13</th><td class="lab"><span class="v">FSP</span></td><td class="out"><span class="v">20</span><span class="to">→ parameters · FSP</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">14</th><td class="lab"><span class="v">UFR</span></td><td class="in"><span class="v">0.033</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">15</th><td class="lab"><span class="v">Convergence</span></td><td class="in"><span class="v">0.11</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">16</th><td class="lab"><span class="v">CRA</span></td><td class="in"><span class="v">10</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">17</th><td class="lab"><span class="v">Input LLFR</span></td><td class="na"><span class="v">0.02571</span><span class="to">→ not used</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">22</th><td class=""></td><td class="lab"><span class="v">LLFR Weights Check</span></td><td class="mid"><span class="v">OK</span></td><td class=""></td><td class="lab"><span class="v">LLFR</span></td><td class="out"><span class="v">0.031883</span><span class="to">→ parameters · LLFR (CC)</span></td></tr><tr><th class="rn">24</th><td class="hd"><span class="v">Maturity [Y]</span></td><td class="hd"><span class="v">DLT</span></td><td class="hd"><span class="v">LLFR Weight</span></td><td class="hd"><span class="v">Input Rate</span></td><td class="hd"><span class="v">Bootstrapped Zero Rate CC</span></td><td class="hd"><span class="v">Basic RFR</span></td></tr><tr><th class="rn">25–174</th><td class="in"><span class="v">1 … 150</span><span class="to">→ curves · Maturity</span></td><td class="in"><span class="to">→ curves · DLT</span></td><td class="in"><span class="to">→ curves · LLFR Weight</span></td><td class="in"><span class="to">→ curves · Input Rate</span></td><td class="out"><span class="to">→ curves · Bootstrapped Zero Rate CC</span></td><td class="out"><span class="to">→ curves · Basic RFR</span></td></tr></tbody></table></div><figcaption><span class="sheettab">Input Data &amp; Extrapolation</span></figcaption></figure><figure class="sheet"><div class="tbl"><table class="grid"><thead><tr><th class="rn"></th><th>G</th><th>H</th><th>I</th><th>J</th><th>K</th><th>L</th></tr></thead><tbody><tr><th class="rn">10</th><td class="lab"><span class="v">Notional VA</span></td><td class="out"><span class="v">0.0085</span><span class="to">→ va_parameters · Notional VA</span></td><td class=""></td><td class=""></td><td class=""></td><td class="in"><span class="v">500000</span><span class="to">→ MV Fixed Income</span></td></tr><tr><th class="rn">11</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="in"><span class="v">490000</span><span class="to">→ MV Fixed Income CSSR Curve</span></td></tr><tr><th class="rn">12</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="out"><span class="v">1176470.59</span><span class="to">→ va_parameters · PVBP MV Fixed Income</span></td></tr><tr><th class="rn">13</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="in"><span class="v">870000</span><span class="to">→ BEL</span></td></tr><tr><th class="rn">14</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="in"><span class="v">850000</span><span class="to">→ BEL CSSR Curve</span></td></tr><tr><th class="rn">15</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="out"><span class="v">2352941.18</span><span class="to">→ va_parameters · PVBP BEL</span></td></tr><tr><th class="rn">16</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="lab"><span class="v">CSSR</span></td><td class="out"><span class="v">0.5</span><span class="to">→ va_parameters · CSSR</span></td></tr><tr><th class="rn">20</th><td class=""></td><td class=""></td><td class=""></td><td class="lab"><span class="v">LLFR</span></td><td class="out"><span class="v">0.0346762</span><span class="to">→ va_parameters · Notional VA LLFR (CC)</span></td><td class=""></td></tr><tr><th class="rn">23</th><td class="hd"><span class="v">Maturity [Y]</span></td><td class="hd"><span class="v">RFR</span></td><td class="hd"><span class="v">RFR CC</span></td><td class="hd"><span class="v">Fwd RFR CC</span></td><td class="hd"><span class="v">Fwd RFR CC + VA*</span></td><td class="hd"><span class="v">CSSR Curve</span></td></tr><tr><th class="rn">24–173</th><td class="mid"><span class="v">1 … 150</span><span class="to">→ va_curves · Maturity</span></td><td class="mid"><span class="to">→ va_curves · Basic RFR</span></td><td class="mid"></td><td class="mid"></td><td class="mid"></td><td class="out"><span class="to">→ va_curves · CSSR Curve</span></td></tr></tbody></table></div><figcaption><span class="sheettab">CSSR Calculation</span></figcaption></figure><figure class="sheet"><div class="tbl"><table class="grid"><thead><tr><th class="rn"></th><th>G</th><th>H</th><th>I</th><th>J</th><th>K</th><th>L</th></tr></thead><tbody><tr><th class="rn">10</th><td class="lab"><span class="v">Macro VA?</span></td><td class="in"><span class="v">FALSE</span><span class="to">→ Use Macro VA</span></td><td class=""></td><td class=""></td><td class="lab"><span class="v">Currency VA</span></td><td class="out"><span class="v">0.0034</span><span class="to">→ va_parameters · Currency VA</span></td></tr><tr><th class="rn">11</th><td class="lab"><span class="v">USA?</span></td><td class="in"><span class="v">TRUE</span><span class="to">→ TRUE if USA given</span></td><td class=""></td><td class=""></td><td class=""></td><td class="out"><span class="v">0.333333</span><span class="to">→ va_parameters · Country Adjustment Factor</span></td></tr><tr><th class="rn">12</th><td class="lab"><span class="v">USA</span></td><td class="in"><span class="v">0.8</span><span class="to">→ USA</span></td><td class=""></td><td class=""></td><td class="lab"><span class="v">Macro VA</span></td><td class="out"><span class="v">#N/A</span><span class="to">→ va_parameters · Macro VA</span></td></tr><tr><th class="rn">13</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="lab"><span class="v">Total VA</span></td><td class="out"><span class="v">0.0034</span><span class="to">→ va_parameters · Total VA</span></td></tr><tr><th class="rn">20</th><td class=""></td><td class=""></td><td class=""></td><td class="lab"><span class="v">LLFR</span></td><td class="out"><span class="v">0.0330031</span><span class="to">→ va_parameters · Total VA LLFR (CC)</span></td><td class=""></td></tr><tr><th class="rn">22</th><td class="hd"><span class="v">Maturity [Y]</span></td><td class="hd"><span class="v">RFR</span></td><td class="hd"><span class="v">RFR CC</span></td><td class="hd"><span class="v">Fwd RFR CC</span></td><td class="hd"><span class="v">Fwd RFR CC + VA</span></td><td class="hd"><span class="v">VA Curve</span></td></tr><tr><th class="rn">23–172</th><td class="mid"><span class="v">1 … 150</span></td><td class="mid"></td><td class="mid"></td><td class="mid"></td><td class="mid"></td><td class="out"><span class="to">→ va_curves · VA Curve</span></td></tr></tbody></table></div><figcaption><span class="sheettab">VA Term Structures</span></figcaption></figure><figure class="sheet"><div class="tbl"><table class="grid"><thead><tr><th class="rn"></th><th>G</th><th>H</th><th>I</th><th>J</th><th>K</th><th>L</th><th>M</th><th>N</th><th>O</th></tr></thead><tbody><tr><th class="rn">10</th><td class="lab"><span class="v">FSP</span></td><td class="mid"><span class="v">20</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">11</th><td class="lab"><span class="v">UFR</span></td><td class="out"><span class="v">0.0345</span><span class="to">→ irr_parameters · UFR Up</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">12</th><td class="lab"><span class="v">VA</span></td><td class="out"><span class="v">0.0034</span><span class="to">→ irr_parameters · VA</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">19</th><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class="lab"><span class="v">LLFRIRR Up</span></td><td class="out"><span class="v">0.0400808</span><span class="to">→ irr_parameters · LLFR IRR Up (CC)</span></td><td class=""></td><td class="lab"><span class="v">LLFR*IRR Up</span></td><td class="out"><span class="v">0.0412009</span><span class="to">→ irr_parameters · LLFR* IRR Up (CC)</span></td></tr><tr><th class="rn">21</th><td class="hd"><span class="v">Maturity [Y]</span></td><td class="hd"><span class="v">Input Rate</span></td><td class="hd"><span class="v">Bootstrapped Zero Rate AC</span></td><td class="hd"><span class="v">IRR Shock Up AC</span></td><td class="hd"><span class="v">IRR Shock Up CC</span></td><td class="hd"><span class="v">IRR Up RFR</span></td><td class="hd"><span class="v">Fwd IRR Shock Up CC</span></td><td class="hd"><span class="v">Fwd + VA CC</span></td><td class="hd"><span class="v">IRR Up with VA</span></td></tr><tr><th class="rn">22–171</th><td class="mid"><span class="v">1 … 150</span><span class="to">→ irr_curves · Maturity</span></td><td class="mid"></td><td class="out"><span class="to">→ irr_curves · Bootstrapped Zero Rate AC</span></td><td class="out"><span class="to">→ irr_curves · IRR Shock Up AC</span></td><td class="mid"></td><td class="out"><span class="to">→ irr_curves · IRR Up RFR</span></td><td class="mid"></td><td class="mid"></td><td class="out"><span class="to">→ irr_curves · IRR Up with VA</span></td></tr></tbody></table></div><figcaption><span class="sheettab">IRR Up Shock</span></figcaption></figure><figure class="sheet"><div class="tbl"><table class="grid"><thead><tr><th class="rn"></th><th>G</th><th>H</th><th>I</th><th>J</th><th>K</th><th>L</th><th>M</th><th>N</th><th>O</th></tr></thead><tbody><tr><th class="rn">10</th><td class="lab"><span class="v">FSP</span></td><td class="mid"><span class="v">20</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">11</th><td class="lab"><span class="v">UFR</span></td><td class="out"><span class="v">0.0315</span><span class="to">→ irr_parameters · UFR Down</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">12</th><td class="lab"><span class="v">VA</span></td><td class="mid"><span class="v">0.0034</span><span class="to">→ same as IRR Up Shock H12</span></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td><td class=""></td></tr><tr><th class="rn">19</th><td class=""></td><td class=""></td><td class=""></td><td class="lab"><span class="v">LLFRIRR Down</span></td><td class="out"><span class="v">0.0099936</span><span class="to">→ irr_parameters · LLFR IRR Down (CC)</span></td><td class=""></td><td class="lab"><span class="v">LLFR*IRR Down</span></td><td class="out"><span class="v">0.0111137</span><span class="to">→ irr_parameters · LLFR* IRR Down (CC)</span></td><td class=""></td></tr><tr><th class="rn">21</th><td class="hd"><span class="v">Maturity [Y]</span></td><td class="hd"><span class="v">Input Rate</span></td><td class="hd"><span class="v">Bootstrapped Zero Rate AC</span></td><td class="hd"><span class="v">IRR Shock Down AC</span></td><td class="hd"><span class="v">IRR Shock Down CC</span></td><td class="hd"><span class="v">IRR Down RFR</span></td><td class="hd"><span class="v">Fwd IRR Shock Down CC</span></td><td class="hd"><span class="v">Fwd + VA CC</span></td><td class="hd"><span class="v">IRR Down with VA</span></td></tr><tr><th class="rn">22–171</th><td class="mid"><span class="v">1 … 150</span></td><td class="mid"></td><td class="mid"><span class="to">→ same as IRR Up Shock</span></td><td class="out"><span class="to">→ irr_curves · IRR Shock Down AC</span></td><td class="mid"></td><td class="out"><span class="to">→ irr_curves · IRR Down RFR</span></td><td class="mid"></td><td class="mid"></td><td class="out"><span class="to">→ irr_curves · IRR Down with VA</span></td></tr></tbody></table></div><figcaption><span class="sheettab">IRR Down Shock</span></figcaption></figure>
+</section>
+
+
+<section id="differences">
+<h2>Where the code and Excel differ</h2>
+<p>For valid inputs the numbers are the same. The differences are in what each accepts and how it shows results.</p>
+<div class="tbl"><table class=""><thead><tr><th>Topic</th><th>The code</th><th>The workbook</th></tr></thead><tbody><tr><td>Number of maturities</td><td><code>Max Maturity</code> rows, 150 by default</td><td>Always 150 rows</td></tr><tr><td>LLFR weights that do not sum to 1</td><td>Stops with an input error</td><td>Shows <code>ERROR</code> in I22 and still calculates</td></tr><tr><td>USA together with the macro VA</td><td>Stops with an input error (not allowed, §9.3.4)</td><td>Adds the macro VA to the currency VA with USA</td></tr><tr><td>Invalid or implausible inputs</td><td>Every file is checked first; all problems are listed</td><td>No checks</td></tr><tr><td>Curve without extrapolation</td><td>Always extrapolates</td><td><code>Extrapolation?</code> FALSE uses the input rates and the <code>Input LLFR</code> in H17</td></tr><tr><td>Missing values</td><td>Empty cell</td><td><code>#N/A</code></td></tr><tr><td>Precision</td><td>Full precision in the files</td><td>Rounded on screen by the number format</td></tr></tbody></table></div>
+<p>The method itself, the checks against the workbook and the remaining differences from EIOPA's documentation are
+described in the <a href="https://github.com/open-source-modelling/EIOPA_constant_forward_methodology#readme">README</a>.</p>
+</section>
+
+</main>
+
+<footer>
+<p>This is not an EIOPA product and is not endorsed by EIOPA. EIOPA's documentation and workbook are © EIOPA.
+Check any result against EIOPA's publications before relying on it.</p>
+<p>Example values come from <code class="path">Output/</code> after running the example in <code class="path">Input/</code>.
+Code released under the MIT License.</p>
+</footer>
+</div>
+</body>
+</html>
