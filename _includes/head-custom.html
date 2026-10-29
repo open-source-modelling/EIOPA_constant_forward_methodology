@@ -1,0 +1,12 @@
+<!-- Draws the formulas of README.md on the GitHub Pages site. The site builder passes inline
+     formulas through as $...$ and turns display formulas ($$...$$) into \[...\]; MathJax renders
+     both. github.com has its own maths support, so README.md itself needs no change. -->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\(', '\\)']],
+      displayMath: [['$$', '$$'], ['\\[', '\\]']]
+    }
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js"></script>
