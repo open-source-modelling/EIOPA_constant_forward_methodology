@@ -8,11 +8,14 @@ abstract: >-
   constant-forward bootstrapping up to the first smoothing point, followed by extrapolation of
   forward rates from the last liquid forward rate to the ultimate forward rate. It also calculates
   the undertaking-specific volatility adjustment and the term structures after the interest rate
-  risk shocks.
+  risk shocks. It is available as the Python package eiopa-rfr on PyPI.
 authors:
   - name: "Open-Source Modelling"
+version: "0.1.0"
+date-released: "2026-10-29"
 url: "https://qnityconsultants.com"
 repository-code: "https://github.com/open-source-modelling/EIOPA_constant_forward_methodology"
+repository-artifact: "https://pypi.org/project/eiopa-rfr/"
 license: MIT
 keywords:
   - Solvency II

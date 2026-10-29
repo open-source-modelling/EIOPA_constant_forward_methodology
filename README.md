@@ -12,8 +12,10 @@ It is written for actuaries who want to
 
 - **understand the change**: the method, its formulas and how it differs from what EIOPA's
   documents and Excel tool show, step by step;
-- **use the algorithm in their own code**: `Code/calculation.py` depends only on the Python
-  standard library and can be copied into another project as it is.
+- **use the algorithm in their own code**: install the package
+  [`eiopa-rfr`](https://pypi.org/project/eiopa-rfr/) with `pip install eiopa-rfr`, or copy
+  `Code/calculation.py`, which depends only on the Python standard library, into another project
+  as it is.
 
 The basic risk-free rate is a line-by-line port of the VBA in EIOPA's demonstration workbook, and
 the VA and the interest rate shocks are ports of the workbook's worksheet formulas, for which there
@@ -221,7 +223,23 @@ shocked rates. The floor applies to the downward curve with VA as well.
 
 ## Quick start
 
-Requirements: Python 3.10 or later.
+Requirements: Python 3.10 or later. The calculation runs either from the package on PyPI or from the
+scripts in this repository; both give the same results.
+
+**With the package.** Install it once, then run it on a folder of input files:
+
+```bash
+pip install eiopa-rfr
+```
+
+```bash
+eiopa-rfr --input Input --output Output
+```
+
+`python -m eiopa_rfr` does the same. The command creates the output folder if needed and deletes
+only the result files of an earlier run from it, so the folder may hold other files too.
+
+**With the scripts.** From the repository folder:
 
 ```bash
 python Code/main.py
@@ -330,8 +348,12 @@ the second step.
 `python Code/main.py` reads two files from `Input/` and writes two files to `Output/`; with the
 optional `va_parameters.csv` it writes two more for the VA, and with the optional
 `irr_parameters.csv` two more for the interest rate shocks. `Output/` is deleted at the start of
-every run, so copy results you want to keep elsewhere. The instrument in `parameters.csv`
-decides how the rates in `curve.csv` are read and how the result files are named.
+every run, so copy results you want to keep elsewhere. The command `eiopa-rfr` reads and writes the
+same files in the folders given with `--input` and `--output`, and deletes only result files of an
+earlier run. The instrument in `parameters.csv` decides how the rates in `curve.csv` are read and
+how the result files are named. [`Docs/inputs-and-outputs.html`](Docs/inputs-and-outputs.html)
+shows all of this on one page, with the workbook cell of every result; download it and open it in
+a browser.
 
 | Instrument | Input rates in `curve.csv` | Bootstrapping | Result files |
 |---|---|---|---|
@@ -519,17 +541,17 @@ All rates are decimals written with full precision.
 
 ## Using the algorithm in your own code
 
+Install the package with `pip install eiopa-rfr` and import from `eiopa_rfr`: every function and
+type in the examples below is available there. Without installing anything, add the `Code` folder
+to the import path (`sys.path.insert(0, "Code")`) and import the same names from its modules
+`calculation`, `validation`, `volatility_adjustment`, `interest_rate_risk` and `data_io`.
 `Code/calculation.py` contains the whole calculation and imports only `math`, `decimal` and
-`typing`. Copy it into your project, or add the `Code` folder to the import path.
+`typing`, so it can also be copied into your project as it is.
 
 ### The complete calculation
 
 ```python
-import sys
-sys.path.insert(0, "Code")            # or copy Code/calculation.py into your project
-
-from calculation import calculate_sheet
-from validation import validate_inputs
+from eiopa_rfr import calculate_sheet, validate_inputs
 
 rates = {1: 0.02176, 2: 0.022621, 3: 0.023795, 4: 0.0248, 5: 0.02569, 6: 0.02651,
          7: 0.02732, 8: 0.028, 9: 0.028631, 10: 0.02927, 11: 0.02979, 12: 0.03027,
@@ -601,10 +623,8 @@ example from your own bootstrapping, you can use the LLFR and extrapolation step
 
 ```python
 import math
-import sys
-sys.path.insert(0, "Code")
 
-from calculation import extrapolation, get_llfr
+from eiopa_rfr import extrapolation, get_llfr
 
 my_zero_curve = {t: 0.025 + 0.0004 * min(t, 30) for t in range(1, 51)}   # annually compounded
 zero_cc = {t: math.log(1 + z) for t, z in my_zero_curve.items()}        # continuously compounded
@@ -622,8 +642,7 @@ besides it. With `inputs` and `res` of the swap example in
 [The complete calculation](#the-complete-calculation):
 
 ```python
-from validation import validate_va_inputs
-from volatility_adjustment import VAInputs, calculate_cssr_sheet, calculate_va_sheet
+from eiopa_rfr import VAInputs, calculate_cssr_sheet, calculate_va_sheet, validate_va_inputs
 
 va = VAInputs(
     RCS_CU=0.01,                       # currency RCS published by EIOPA (100 bp)
@@ -661,9 +680,7 @@ besides it. With `inputs` and `res` of the swap example in
 ```python
 from pathlib import Path
 
-from data_io import read_irr_inputs
-from interest_rate_risk import calculate_irr_down_sheet, calculate_irr_up_sheet
-from validation import validate_irr_inputs
+from eiopa_rfr import calculate_irr_down_sheet, calculate_irr_up_sheet, read_irr_inputs, validate_irr_inputs
 
 irr = read_irr_inputs(Path("Examples/EIOPA_Example/Input"))   # the workbook's shock parameters
 validate_irr_inputs(irr, inputs["MAX_MATURITY"])
@@ -741,6 +758,15 @@ python -m unittest discover -s Code
 
 ```bash
 python -m pytest Code
+```
+
+The package has its own tests, in `Package/tests`: they check that `Package/src/eiopa_rfr` is
+generated from the current `Code` folder, that the command reproduces the workbook's shocked curves
+from the EIOPA example, and that the examples in the package's README print what they say. With
+pytest:
+
+```bash
+python -m pytest Package
 ```
 
 To check the example against the workbook yourself, compare `Output/swaps_curves.csv`
@@ -834,6 +860,16 @@ Code/
   validation.py        checks that the inputs are complete and plausible
   data_io.py           reading Input/ and writing Output/
   tests/               unit tests; irr_workbook_values.csv holds the workbook's shocked curves
+Package/               the package eiopa-rfr on PyPI, built from this folder
+  pyproject.toml       package metadata; README.md is the package's page on PyPI
+  sync_code.py         copies Code/ into src/eiopa_rfr with relative imports; run it after
+                       changing Code/ (--check only reports differences)
+  src/eiopa_rfr/       the generated modules, plus cli.py (the command eiopa-rfr) and __init__.py
+                       (the public names and the version)
+  tests/               tests of the package
+Docs/
+  inputs-and-outputs.html  inputs, calculation and outputs on one page, with the workbook cell of
+                       every result
 Input/                 curve.csv, parameters.csv and the optional va_parameters.csv and irr_parameters.csv
 Output/                swaps_*.csv and government_bonds_*.csv (curves and parameters, with VA: va_*,
                        shocks: irr_*)
