@@ -30,7 +30,10 @@ class TestValidateInputs(unittest.TestCase):
 
     def test_weights_with_floating_point_noise_are_valid(self) -> None:
         inputs = example_inputs()
-        inputs["LLFRweightsIn"] = {20: 0.01, 25: 0.29, 30: 0.7}     # sum() gives 0.9999999999999999
+        # sum() gives 0.9999999999999999 for these weights on every Python version. Not for all weights:
+        # from Python 3.12, sum() adds floats more accurately, so that 0.01, 0.29 and 0.7, for example,
+        # sum to 0.9999999999999999 from 3.12 but to exactly 1.0 before
+        inputs["LLFRweightsIn"] = {20: 0.08, 25: 0.57, 30: 0.35}
         self.assertNotEqual(sum(inputs["LLFRweightsIn"].values()), 1.0)
         validate_inputs(inputs)
 
