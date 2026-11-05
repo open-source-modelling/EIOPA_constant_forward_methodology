@@ -1,5 +1,7 @@
 # EIOPA risk-free rate extrapolation in Python
 
+[![Tests](https://github.com/open-source-modelling/EIOPA_constant_forward_methodology/actions/workflows/tests.yml/badge.svg)](https://github.com/open-source-modelling/EIOPA_constant_forward_methodology/actions/workflows/tests.yml)
+
 A transparent Python implementation of EIOPA's new method for deriving the Solvency II basic
 risk-free interest rate term structure from swap rates or government bond zero rates:
 constant-forward bootstrapping up to the first smoothing point, followed by extrapolation of
@@ -769,6 +771,11 @@ pytest:
 python -m pytest Package
 ```
 
+Both sets of tests also run together, with `python -m pytest Code Package --rootdir=.`. GitHub
+Actions runs this command (`.github/workflows/tests.yml`) for every push to `main` and every pull
+request, on Python 3.10 to 3.14 on Linux and Windows: once on `Package/src` and once on the
+installed package. It also runs `python Package/sync_code.py --check`.
+
 To check the example against the workbook yourself, compare `Output/swaps_curves.csv`
 with the values the workbook in `Sources/` stores for cells H13, L22, K25:K174 and L25:L174 of the
 sheet *Input Data & Extrapolation*. The workbook's inputs are the same as those in `Input/`. For
@@ -881,6 +888,8 @@ Examples/
                        published files for that date (EIOPA_RFR_20260930), charts and a copy of
                        the workbook
 Sources/               EIOPA's technical documentation and demonstration workbook (example inputs)
+.github/workflows/
+  tests.yml            runs the tests of Code and Package on GitHub Actions (see Verification)
 ```
 
 To run an example, copy the files of its input folder into `Input/`.

@@ -1,0 +1,56 @@
+# Runs the tests of Code and of the package eiopa-rfr (Package) on every push to main and every pull
+# request, and checks that the package is generated from the current Code folder.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a new push to the same branch or pull request cancels the run still going for the previous one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Package in sync with Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Check that Package/src/eiopa_rfr is generated from Code
+        run: python Package/sync_code.py --check
+
+  test:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # the versions the package supports (requires-python and the classifiers in Package/pyproject.toml)
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pytest
+        run: python -m pip install pytest
+      # --rootdir=. names the tests Code/tests/... and Package/tests/..., so a failure shows which folder it is in
+      - name: Tests of Code and of the package in Package/src
+        run: python -m pytest Code Package --rootdir=.
+      - name: Install the package
+        run: python -m pip install ./Package
+      - name: Tests of Code and of the installed package
+        run: python -m pytest Code Package --rootdir=.
